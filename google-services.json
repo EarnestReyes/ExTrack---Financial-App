@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "943746056107",
+    "project_id": "extrack-f16fe",
+    "storage_bucket": "extrack-f16fe.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:943746056107:android:ee45e85606c247a6e1dcee",
+        "android_client_info": {
+          "package_name": "com.extrack.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGM3Nfec-TucCjaP6QU7cfvccKmS78IuY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
