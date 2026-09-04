@@ -315,12 +315,12 @@ const createStyles = (
 
   const backgroundColor =
     isDarkMode
-      ? '#121212'
+      ? '#0f172a'
       : '#f5f5f5';
 
   const cardColor =
     isDarkMode
-      ? '#1e1e1e'
+      ? '#1e293b'
       : 'white';
 
   const textColor =

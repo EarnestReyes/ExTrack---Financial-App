@@ -1,18 +1,15 @@
 import DefaultAvatar from "@/assets/images/default-avatar.png";
 import { auth, db } from "@/config/firebase";
 import { useFocusEffect, useRouter } from "expo-router";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
   Dimensions,
   Image,
-  Keyboard,
-  KeyboardAvoidingView,
   Modal,
   PanResponder,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -107,11 +104,13 @@ export default function HomeScreen() {
 
   // Real-time listener for Firestore Profile Picture with immediate local cache write
   useEffect(() => {
-    if (!currentUser) return;
+  // Check if both currentUser and db are fully initialized
+  if (!currentUser?.uid || !db) return;
 
+  try {
+    // 1. Listen for User Profile Picture changes
     const userDocRef = doc(db, "users", currentUser.uid);
-
-    const unsubscribe = onSnapshot(
+    const unsubscribeUser = onSnapshot(
       userDocRef,
       (docSnap) => {
         if (docSnap.exists()) {
@@ -120,17 +119,51 @@ export default function HomeScreen() {
 
           if (freshPic) {
             setProfilePic(freshPic);
-            setUserProfilePicture(freshPic); // <--- Update function call here
+            setUserProfilePicture(freshPic);
           }
         }
       },
-      (error) => {
+      (error: Error) => {
         console.error("Error fetching profile picture from Firestore:", error);
-      },
+      }
     );
 
-    return () => unsubscribe();
-  }, [currentUser]);
+    // 2. Listen for Real-Time Transactions changes
+    const transactionsCollectionRef = collection(
+      db,
+      "users",
+      currentUser.uid,
+      "transactions"
+    );
+    const unsubscribeTransactions = onSnapshot(
+      transactionsCollectionRef,
+      (snapshot) => {
+        const remoteData = snapshot.docs.map((docItem) => ({
+          id: docItem.id,
+          ...docItem.data(),
+        })) as TransactionItem[];
+
+        remoteData.sort((a, b) => {
+          const dateA = `${a.date} ${a.time}`;
+          const dateB = `${b.date} ${b.time}`;
+          return dateB.localeCompare(dateA);
+        });
+
+        setTransactions(remoteData);
+      },
+      (error: Error) => {
+        console.error("Error fetching transactions from Firestore:", error);
+      }
+    );
+
+    return () => {
+      unsubscribeUser();
+      unsubscribeTransactions();
+    };
+  } catch (err) {
+    console.error("Error initializing Firestore listeners:", err);
+  }
+}, [currentUser]);
 
   const toggleDarkMode = (value: boolean) => {
     setIsDarkMode(value);
@@ -209,8 +242,8 @@ export default function HomeScreen() {
     loadTransactions();
   };
 
-  const openEditTransaction = (transaction: TransactionItem) => {
-    setEditingTransactionId(transaction.id);
+    const openEditTransaction = (transaction: TransactionItem) => {
+    setEditingTransactionId(transaction.id ? Number(transaction.id) : undefined);
     setName(transaction.name);
     setAmount(formatAmountInput(`₱${transaction.amount}`));
     setType(transaction.type as "Income" | "Expense");
@@ -322,13 +355,17 @@ export default function HomeScreen() {
   if (balancePeriod === "Month") balanceStartDate.setDate(1);
   if (balancePeriod === "Year") balanceStartDate.setMonth(0, 1);
 
-  const balanceTransactions = [...transactions].sort((first, second) => {
-    const firstDate = `${first.date} ${first.time}`;
-    const secondDate = `${second.date} ${second.time}`;
-    return (
-      firstDate.localeCompare(secondDate) || (first.id ?? 0) - (second.id ?? 0)
-    );
-  });
+      const balanceTransactions = [...transactions].sort((first, second) => {
+      const firstDate = `${first.date} ${first.time}`;
+      const secondDate = `${second.date} ${second.time}`;
+      
+      const dateComparison = firstDate.localeCompare(secondDate);
+      if (dateComparison !== 0) return dateComparison;
+
+      const firstId = Number(first.id) || 0;
+      const secondId = Number(second.id) || 0;
+      return firstId - secondId;
+    });
   const startingBalance = balanceTransactions
     .filter((transaction) => {
       const [year, month, day] = transaction.date.split("-").map(Number);
@@ -845,119 +882,112 @@ export default function HomeScreen() {
       {/* ADD TRANSACTION MODAL */}
       <Modal visible={showForm} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={styles.modalKeyboardAvoidingView}
-          >
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>
-                {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
-              </Text>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
+            </Text>
 
-              {/* TYPE SWITCHER */}
-              <View style={styles.typeContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.typeButton,
-                    type === "Expense" && styles.typeButtonActiveExpense,
-                  ]}
-                  onPress={() => setType("Expense")}
-                >
-                  <Text
-                    style={[
-                      styles.typeText,
-                      type === "Expense" && styles.typeTextActive,
-                    ]}
-                  >
-                    Expense
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.typeButton,
-                    type === "Income" && styles.typeButtonActiveIncome,
-                  ]}
-                  onPress={() => setType("Income")}
-                >
-                  <Text
-                    style={[
-                      styles.typeText,
-                      type === "Income" && styles.typeTextActive,
-                    ]}
-                  >
-                    Income
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.inputLabel}>Title</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Groceries"
-                placeholderTextColor="#94a3b8"
-                value={name}
-                onChangeText={(value) => setName(value.replace(/[0-9]/g, ""))}
-              />
-
-              <Text style={styles.inputLabel}>Amount (₱)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="₱0.00"
-                placeholderTextColor="#94a3b8"
-                keyboardType="decimal-pad"
-                value={amount}
-                onFocus={handleAmountFocus}
-                onChangeText={handleAmountChange}
-              />
-
-              <Text style={styles.inputLabel}>Category</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                onTouchStart={() => Keyboard.dismiss()}
-                style={{ marginBottom: 16 }}
+            {/* TYPE SWITCHER */}
+            <View style={styles.typeContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.typeButton,
+                  type === "Expense" && styles.typeButtonActiveExpense,
+                ]}
+                onPress={() => setType("Expense")}
               >
-                {categories.map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
+                <Text
+                  style={[
+                    styles.typeText,
+                    type === "Expense" && styles.typeTextActive,
+                  ]}
+                >
+                  Expense
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.typeButton,
+                  type === "Income" && styles.typeButtonActiveIncome,
+                ]}
+                onPress={() => setType("Income")}
+              >
+                <Text
+                  style={[
+                    styles.typeText,
+                    type === "Income" && styles.typeTextActive,
+                  ]}
+                >
+                  Income
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel}>Title</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Groceries"
+              placeholderTextColor="#94a3b8"
+              value={name}
+              onChangeText={setName}
+            />
+
+            <Text style={styles.inputLabel}>Amount (₱)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="₱0.00"
+              placeholderTextColor="#94a3b8"
+              keyboardType="decimal-pad"
+              value={amount}
+              onFocus={handleAmountFocus}
+              onChangeText={handleAmountChange}
+            />
+
+            <Text style={styles.inputLabel}>Category</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginBottom: 16 }}
+            >
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[
+                    styles.categoryChip,
+                    category === cat && styles.categoryChipActive,
+                  ]}
+                  onPress={() => setCategory(cat)}
+                >
+                  <Text
                     style={[
-                      styles.categoryChip,
-                      category === cat && styles.categoryChipActive,
+                      styles.categoryText,
+                      category === cat && styles.categoryTextActive,
                     ]}
-                    onPress={() => setCategory(cat)}
                   >
-                    <Text
-                      style={[
-                        styles.categoryText,
-                        category === cat && styles.categoryTextActive,
-                      ]}
-                    >
-                      {cat}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.cancelButton]}
-                  onPress={closeTransactionForm}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.saveButton]}
-                  onPress={handleSaveTransaction}
-                >
-                  <Text style={styles.saveButtonText}>
-                    {editingTransactionId ? "Update" : "Save"}
+                    {cat}
                   </Text>
                 </TouchableOpacity>
-              </View>
+              ))}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={closeTransactionForm}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={handleSaveTransaction}
+              >
+                <Text style={styles.saveButtonText}>
+                  {editingTransactionId ? "Update" : "Save"}
+                </Text>
+              </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1214,9 +1244,6 @@ const createStyles = (isDarkMode: boolean) => {
       justifyContent: "center",
       alignItems: "center",
       paddingHorizontal: 20,
-    },
-    modalKeyboardAvoidingView: {
-      width: "100%",
     },
     actionModalOverlay: {
       flex: 1,

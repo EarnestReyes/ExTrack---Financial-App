@@ -14,10 +14,10 @@ const firebaseConfig = {
   measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
+// 1. App Singleton Initialization
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const storage = getStorage(app);
 
-// Explicitly type `auth` as `Auth`
+// 2. Auth Singleton Initialization (With AsyncStorage Persistence)
 let auth: Auth;
 
 try {
@@ -28,11 +28,10 @@ try {
     persistence: getReactNativePersistence(AsyncStorage),
   });
 } catch (e) {
-  // Prevent crash during Expo Fast Refresh
   auth = getAuth(app);
 }
 
-// Initialize Firestore with long polling to fix silent connection hangs in Expo
+// 3. Firestore Singleton Initialization (With Long Polling Fix for Expo)
 let db: Firestore;
 
 try {
@@ -40,8 +39,10 @@ try {
     experimentalForceLongPolling: true,
   });
 } catch (e) {
-  // Prevent re-initialization error during Fast Refresh
   db = getFirestore(app);
 }
+
+// 4. Storage Singleton
+export const storage = getStorage(app);
 
 export { app, auth, db };

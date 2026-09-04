@@ -11,16 +11,37 @@ import {
   ActivityIndicator,
 } from 'react-native';
 
-import { router } from 'expo-router';
-import { useState, useMemo } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useState, useMemo, useCallback } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/config/firebase';
+import { getThemePreference } from '../database';
 
 export default function LoginScreen() {
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === 'dark';
+  const systemColorScheme = useColorScheme();
+  
+  // Initialize state directly from stored preference to prevent layout flickers
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const savedTheme = getThemePreference();
+    if (savedTheme !== null) {
+      return savedTheme === 'dark';
+    }
+    return systemColorScheme === 'dark';
+  });
 
-  // Memoize stylesheet to prevent re-creation on every render
+  // Re-sync when navigating back to screen
+  useFocusEffect(
+    useCallback(() => {
+      const savedTheme = getThemePreference();
+      if (savedTheme !== null) {
+        setIsDarkMode(savedTheme === 'dark');
+      } else {
+        setIsDarkMode(systemColorScheme === 'dark');
+      }
+    }, [systemColorScheme])
+  );
+
+  // Memoize stylesheet matching explore.tsx color values
   const styles = useMemo(() => createStyles(isDarkMode), [isDarkMode]);
 
   const [email, setEmail] = useState('');
@@ -99,7 +120,7 @@ export default function LoginScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder="Enter your email"
-              placeholderTextColor={isDarkMode ? '#777777' : '#999999'}
+              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -113,7 +134,7 @@ export default function LoginScreen() {
               value={password}
               onChangeText={setPassword}
               placeholder="Enter your password"
-              placeholderTextColor={isDarkMode ? '#777777' : '#999999'}
+              placeholderTextColor={isDarkMode ? '#64748b' : '#94a3b8'}
               secureTextEntry
               autoCapitalize="none"
               editable={!loading}
@@ -155,13 +176,14 @@ export default function LoginScreen() {
   );
 }
 
-// STYLES
+// STYLES (Identical theme palette to explore.tsx)
 const createStyles = (isDarkMode: boolean) => {
-  const backgroundColor = isDarkMode ? '#121212' : '#f5f5f5';
-  const cardColor = isDarkMode ? '#1e1e1e' : 'white';
-  const textColor = isDarkMode ? '#ffffff' : '#333333';
-  const secondaryTextColor = isDarkMode ? '#aaaaaa' : 'gray';
-  const borderColor = isDarkMode ? '#333333' : '#dddddd';
+  const backgroundColor = isDarkMode ? '#0f172a' : '#f8fafc';
+  const cardColor = isDarkMode ? '#1e293b' : '#ffffff';
+  const textColor = isDarkMode ? '#f8fafc' : '#0f172a';
+  const secondaryTextColor = isDarkMode ? '#94a3b8' : '#64748b';
+  const borderColor = isDarkMode ? '#334155' : '#cbd5e1';
+  const inputBgColor = isDarkMode ? '#0f172a' : '#f8fafc';
 
   return StyleSheet.create({
     keyboardContainer: { flex: 1, backgroundColor },
@@ -187,12 +209,18 @@ const createStyles = (isDarkMode: boolean) => {
     logoText: { color: 'white', fontSize: 40, fontWeight: 'bold' },
     title: { fontSize: 32, fontWeight: 'bold', color: textColor },
     subtitle: { fontSize: 16, color: secondaryTextColor, marginTop: 4, textAlign: 'center' },
-    loginCard: { backgroundColor: cardColor, borderRadius: 18, padding: 22 },
+    loginCard: { 
+      backgroundColor: cardColor, 
+      borderRadius: 18, 
+      padding: 22,
+      borderWidth: 1,
+      borderColor,
+    },
     loginTitle: { fontSize: 24, fontWeight: 'bold', color: textColor, marginBottom: 5 },
     loginSubtitle: { fontSize: 14, color: secondaryTextColor, marginBottom: 20 },
     inputLabel: { fontSize: 15, fontWeight: '600', color: textColor, marginBottom: 8, marginTop: 15 },
     input: {
-      backgroundColor: cardColor,
+      backgroundColor: inputBgColor,
       borderRadius: 12,
       borderWidth: 1,
       borderColor,
@@ -202,7 +230,7 @@ const createStyles = (isDarkMode: boolean) => {
       color: textColor,
     },
     forgotButton: { alignSelf: 'flex-end', marginTop: 12 },
-    forgotText: { fontSize: 14, fontWeight: '600', color: '#1e3a8a' },
+    forgotText: { fontSize: 14, fontWeight: '600', color: '#3b82f6' },
     loginButton: {
       backgroundColor: '#1e3a8a',
       padding: 18,
@@ -214,6 +242,6 @@ const createStyles = (isDarkMode: boolean) => {
     loginButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
     registerContainer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 22 },
     registerText: { fontSize: 14, color: secondaryTextColor, marginRight: 5 },
-    registerLink: { fontSize: 14, fontWeight: 'bold', color: '#1e3a8a' },
+    registerLink: { fontSize: 14, fontWeight: 'bold', color: '#3b82f6' },
   });
 };

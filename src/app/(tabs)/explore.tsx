@@ -2,10 +2,14 @@ import { auth, db } from "@/config/firebase";
 import * as ImagePicker from "expo-image-picker";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useFocusEffect, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+
 import {
   addDoc,
   collection,
   deleteDoc,
+  serverTimestamp,
   doc,
   onSnapshot,
   updateDoc,
@@ -42,6 +46,17 @@ interface Account {
   name: string;
   type: string;
   balance: number;
+}
+
+interface Loan {
+  id: string;
+  title: string;
+  totalAmount: number;
+  monthlyDeduction: number;
+  startDate: string;
+  durationMonths: number;
+  remainingMonths: number;
+  accountId: string;
 }
 
 interface SavedCard {
@@ -85,6 +100,117 @@ export default function ProfileScreen() {
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<SavedCard | null>(null);
 
+ // Loans State
+  const [loanTitle, setLoanTitle] = useState("");
+  const [loanAmount, setLoanAmount] = useState("");
+  const [loanDuration, setLoanDuration] = useState(""); // in months
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [isCreatingLoan, setIsCreatingLoan] = useState(false);
+  const [isLoanModalVisible, setIsLoanModalVisible] = useState(false);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [loanStartDate, setLoanStartDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+    // Automatically calculate end date and total projected cost
+  const calculatedEndDate = useMemo(() => {
+    const durationNum = Number(loanDuration);
+    if (isNaN(durationNum) || durationNum <= 0) return null;
+
+    const endDate = new Date(loanStartDate);
+    endDate.setMonth(endDate.getMonth() + durationNum);
+    return endDate;
+  }, [loanStartDate, loanDuration]);
+
+  const totalExpense = useMemo(() => {
+    const amountNum = Number(loanAmount);
+    return isNaN(amountNum) || amountNum <= 0 ? 0 : amountNum;
+  }, [loanAmount]);
+
+  const handleCreateLoan = async () => {
+    if (!currentUser?.uid || !loanAmount || !loanDuration || !selectedAccountId) {
+      Alert.alert("Error", "Please fill in all loan details.");
+      return;
+    }
+
+    try {
+      setIsCreatingLoan(true);
+      const amountNum = Number(loanAmount);
+      const durationNum = Number(loanDuration);
+
+      if (isNaN(amountNum) || isNaN(durationNum) || durationNum <= 0) {
+        Alert.alert("Error", "Please enter valid numeric values for amount and duration.");
+        return;
+      }
+
+      const rawMonthlyPayment = amountNum / durationNum;
+      const monthlyPayment = Math.round(rawMonthlyPayment * 100) / 100;
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      // 1. Create Loan Entry in Firestore
+      const loansColRef = collection(db, "users", currentUser.uid, "loans");
+      await addDoc(loansColRef, {
+        title: loanTitle || "Personal Loan",
+        totalAmount: amountNum,
+        monthlyDeduction: monthlyPayment,
+        startDate: todayStr,
+        durationMonths: durationNum,
+        remainingMonths: durationNum - 1, // First installment deducted today
+        accountId: selectedAccountId,
+        createdAt: serverTimestamp(),
+      });
+
+      // 2. Log First Automated Transaction
+      const transactionsColRef = collection(
+        db,
+        "users",
+        currentUser.uid,
+        "transactions"
+      );
+      await addDoc(transactionsColRef, {
+        name: `Loan Repayment: ${loanTitle || "Personal Loan"}`,
+        amount: monthlyPayment,
+        type: "Expense",
+        category: "Loan/Debt",
+        date: todayStr,
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        description: `Automated deduction (1/${durationNum})`,
+      });
+
+      // 3. Deduct from Selected Account Balance
+      const accountRef = doc(
+        db,
+        "users",
+        currentUser.uid,
+        "accounts",
+        selectedAccountId
+      );
+      const targetAccount = accounts.find((acc) => acc.id === selectedAccountId);
+      if (targetAccount) {
+        const updatedBalance = Math.max(0, targetAccount.balance - monthlyPayment);
+        await updateDoc(accountRef, {
+          balance: updatedBalance,
+        });
+      }
+
+      Alert.alert("Success", "Loan scheduled and first deduction applied!");
+
+      // 4. Reset Form Fields and Close Modal
+      setLoanTitle("");
+      setLoanAmount("");
+      setLoanDuration("");
+      setSelectedAccountId("");
+      setIsLoanModalVisible(false);
+    } catch (error) {
+      console.error("Error logging loan:", error);
+      Alert.alert("Error", "Failed to save loan information.");
+    } finally {
+      setIsCreatingLoan(false);
+    }
+  };
+
   const [profile, setProfile] = useState<UserProfile>({
     displayName: "User",
     email: "",
@@ -122,7 +248,7 @@ export default function ProfileScreen() {
       } else {
         setIsDarkMode(systemColorScheme === "dark");
       }
-    }, [systemColorScheme]),
+    }, [systemColorScheme])
   );
 
   const handleDarkModeToggle = (value: boolean) => {
@@ -138,7 +264,7 @@ export default function ProfileScreen() {
     if (!permissionResult.granted) {
       Alert.alert(
         "Permission Denied",
-        "Permission to access gallery is required!",
+        "Permission to access gallery is required!"
       );
       return;
     }
@@ -147,7 +273,7 @@ export default function ProfileScreen() {
       mediaTypes: ["images"],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.2, // Reduced quality to keep Base64 well within Firestore 1MB document limit
+      quality: 0.2, // Keep Base64 within Firestore 1MB document limit
       base64: true,
     });
 
@@ -203,10 +329,11 @@ export default function ProfileScreen() {
       return;
     }
 
+    // Define Firestore references
     const userDocRef = doc(db, "users", currentUser.uid);
-    const accountsColRef = collection(db, "users", currentUser.uid, "accounts");
-    const cardsColRef = collection(db, "users", currentUser.uid, "cards");
+    const loansColRef = collection(db, "users", currentUser.uid, "loans");
 
+    // 1. Synchronize Profile Data
     const unsubscribeUser = onSnapshot(
       userDocRef,
       (docSnap) => {
@@ -242,46 +369,36 @@ export default function ProfileScreen() {
       (error) => {
         console.error("Error fetching user document:", error);
         setLoading(false);
-      },
+      }
     );
 
-    const unsubscribeAccounts = onSnapshot(
-      accountsColRef,
+    // 2. Synchronize Loans
+    const unsubscribeLoans = onSnapshot(
+      loansColRef,
       (snapshot) => {
-        const fetchedAccounts: Account[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          name: docSnap.data().name || "Account",
-          type: docSnap.data().type || "Savings",
-          balance: docSnap.data().balance || 0,
-        }));
-        setAccounts(fetchedAccounts);
+        const fetchedLoans: Loan[] = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data();
+          return {
+            id: docSnap.id,
+            title: data.title ?? "Personal Loan",
+            totalAmount: Number(data.totalAmount) || 0,
+            monthlyDeduction: Number(data.monthlyDeduction) || 0,
+            startDate: data.startDate ?? new Date().toISOString().split("T")[0],
+            durationMonths: Number(data.durationMonths) || 1,
+            remainingMonths: Number(data.remainingMonths) || 0,
+            accountId: data.accountId ?? "",
+          };
+        });
+        setLoans(fetchedLoans);
       },
       (error) => {
-        console.error("Error fetching accounts:", error);
-      },
-    );
-
-    const unsubscribeCards = onSnapshot(
-      cardsColRef,
-      (snapshot) => {
-        const savedCards: SavedCard[] = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          name: docSnap.data().name || "Card",
-          type: docSnap.data().type || "Debit",
-          lastFour: docSnap.data().lastFour || "",
-          expiry: docSnap.data().expiry || "",
-        }));
-        setCards(savedCards);
-      },
-      (error) => {
-        console.error("Error fetching cards:", error);
-      },
+        console.error("Error fetching loans:", error);
+      }
     );
 
     return () => {
       unsubscribeUser();
-      unsubscribeAccounts();
-      unsubscribeCards();
+      unsubscribeLoans();
     };
   }, [currentUser?.uid]);
 
@@ -385,6 +502,10 @@ export default function ProfileScreen() {
   };
 
   const handleAction = (title: string) => {
+    if (title === "Loan") {
+      setIsLoanModalVisible(true);
+      return;
+    }
     if (title === "Manage Cards") {
       Alert.alert(
         "Add a card",
@@ -613,19 +734,160 @@ export default function ProfileScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => handleAction("Receive Money")}
-          >
-            <View
+  style={styles.actionButton}
+  onPress={() => handleAction("Loan")}
+>
+  <View
+    style={[
+      styles.actionIconContainer,
+      { backgroundColor: "#e0e7ff" },
+    ]}
+  >
+    <Ionicons name="calendar-outline" size={20} color="#4f46e5" />
+  </View>
+  <Text style={styles.actionLabel}>Loan</Text>
+</TouchableOpacity>
+
+<Modal
+  visible={isLoanModalVisible}
+  animationType="slide"
+  transparent={true}
+  onRequestClose={() => setIsLoanModalVisible(false)}
+>
+  <View style={modalStyles.overlay}>
+    <View style={modalStyles.container}>
+      <Text style={modalStyles.title}>Schedule New Loan</Text>
+
+      <Text style={modalStyles.label}>Loan Title / Description</Text>
+      <TextInput
+        style={modalStyles.input}
+        placeholder="e.g. Car Loan, Emergency Fund"
+        placeholderTextColor="#9ca3af"
+        value={loanTitle}
+        onChangeText={setLoanTitle}
+      />
+
+      <Text style={modalStyles.label}>Total Amount</Text>
+      <TextInput
+        style={modalStyles.input}
+        placeholder="0.00"
+        placeholderTextColor="#9ca3af"
+        keyboardType="numeric"
+        value={loanAmount}
+        onChangeText={setLoanAmount}
+      />
+
+      <Text style={modalStyles.label}>Duration (Months)</Text>
+      <TextInput
+        style={modalStyles.input}
+        placeholder="e.g. 12"
+        placeholderTextColor="#9ca3af"
+        keyboardType="number-pad"
+        value={loanDuration}
+        onChangeText={setLoanDuration}
+      />
+
+      {/* Start Date Picker Button */}
+      <Text style={modalStyles.label}>Start Date</Text>
+      <TouchableOpacity
+        style={modalStyles.datePickerButton}
+        onPress={() => setShowDatePicker(true)}
+      >
+        <Ionicons name="calendar-outline" size={18} color="#4b5563" />
+        <Text style={modalStyles.datePickerText}>
+          {loanStartDate.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Date Picker Component */}
+      {showDatePicker && (
+        <DateTimePicker
+          value={loanStartDate}
+          mode="date"
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+            setShowDatePicker(Platform.OS === "ios");
+            if (selectedDate) setLoanStartDate(selectedDate);
+          }}
+        />
+      )}
+
+      {/* Dynamic Summary Card */}
+      <View style={modalStyles.summaryCard}>
+        <View style={modalStyles.summaryRow}>
+          <Text style={modalStyles.summaryLabel}>End Date:</Text>
+          <Text style={modalStyles.summaryValue}>
+            {calculatedEndDate
+              ? calculatedEndDate.toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })
+              : "--"}
+          </Text>
+        </View>
+        <View style={modalStyles.summaryRow}>
+          <Text style={modalStyles.summaryLabel}>Total Expense:</Text>
+          <Text style={modalStyles.summaryValueBold}>
+            ₱{totalExpense.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={modalStyles.label}>Select Account for Deductions</Text>
+      {accounts.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
+          {accounts.map((acc) => (
+            <TouchableOpacity
+              key={acc.id}
               style={[
-                styles.actionIconContainer,
-                { backgroundColor: "#dcfce7" },
+                modalStyles.accountChip,
+                selectedAccountId === acc.id && modalStyles.accountChipSelected,
               ]}
+              onPress={() => setSelectedAccountId(acc.id)}
             >
-              <Text style={styles.actionIcon}>↘</Text>
-            </View>
-            <Text style={styles.actionLabel}>Receive</Text>
-          </TouchableOpacity>
+              <Text
+                style={[
+                  modalStyles.accountChipText,
+                  selectedAccountId === acc.id && modalStyles.accountChipTextSelected,
+                ]}
+              >
+                {acc.name} (₱{acc.balance.toLocaleString()})
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : (
+        <Text style={modalStyles.errorText}>
+          ⚠️ No active accounts found. Please create an account first.
+        </Text>
+      )}
+
+      <View style={modalStyles.buttonContainer}>
+        <TouchableOpacity
+          style={[modalStyles.button, modalStyles.cancelButton]}
+          onPress={() => setIsLoanModalVisible(false)}
+        >
+          <Text style={modalStyles.buttonTextCancel}>Cancel</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[modalStyles.button, modalStyles.submitButton]}
+          onPress={handleCreateLoan}
+          disabled={isCreatingLoan}
+        >
+          <Text style={modalStyles.buttonText}>
+            {isCreatingLoan ? "Processing..." : "Save Loan"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
 
           <TouchableOpacity
             style={styles.actionButton}
@@ -1533,3 +1795,141 @@ const createStyles = (isDarkMode: boolean) => {
     saveButtonText: { color: "#ffffff", fontWeight: "600" },
   });
 };
+
+const modalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  container: {
+    width: "100%",
+    backgroundColor: "#1e293b",
+    borderRadius: 16,
+    padding: 20,
+    elevation: 5,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: "bold",
+    marginBottom: 16,
+    textAlign: "center",
+    color: '#fff'
+  },
+  label: {
+    fontSize: 14,
+    color: "#fff",
+    marginBottom: 6,
+    fontWeight: "500",
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 14,
+    fontSize: 16,
+    color: '#6b7280'
+  },
+  accountChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    marginRight: 8,
+    backgroundColor: "#f9fafb",
+  },
+  accountChipSelected: {
+    backgroundColor: "#4f46e5",
+    borderColor: "#4f46e5",
+  },
+  accountChipText: {
+    fontSize: 14,
+    color: "#374151",
+  },
+  accountChipTextSelected: {
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+  },
+  button: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  cancelButton: {
+    backgroundColor: "#ef4444",
+    marginRight: 8,
+  },
+  submitButton: {
+    backgroundColor: "#4f46e5",
+    marginLeft: 8,
+  },
+  buttonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 16,
+  },
+  datePickerButton: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  backgroundColor: "#f3f4f6",
+  borderWidth: 1,
+  borderColor: "#e5e7eb",
+  borderRadius: 8,
+  padding: 12,
+  marginBottom: 14,
+},
+datePickerText: {
+  fontSize: 15,
+  color: "#1f2937",
+  fontWeight: "500",
+},
+summaryCard: {
+  backgroundColor: "#f0fdf4",
+  borderWidth: 1,
+  borderColor: "#bbf7d0",
+  borderRadius: 10,
+  padding: 12,
+  marginBottom: 14,
+},
+summaryRow: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginVertical: 2,
+},
+summaryLabel: {
+  fontSize: 13,
+  color: "#166534",
+},
+summaryValue: {
+  fontSize: 13,
+  fontWeight: "600",
+  color: "#15803d",
+},
+summaryValueBold: {
+  fontSize: 15,
+  fontWeight: "700",
+  color: "#166534",
+},
+errorText: {
+  color: "#ef4444",
+  marginBottom: 15,
+  fontSize: 13,
+},
+buttonTextCancel: {
+  fontWeight: "600",
+  fontSize: 15,
+  color: "#4b5563",
+},
+});
