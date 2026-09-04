@@ -641,7 +641,7 @@ const unsubscribeCards = onSnapshot(
     router.push("/help");
     return;
   }
-  Alert.alert(title, `This feature is under construction, Thank you for your understanding!`);
+  Alert.alert(title, `This feature is currently in a limited pilot phase, Thank you for your understanding!`);
 };
 
   // Ensure closeCardModal is defined ONLY ONCE in the component
@@ -846,7 +846,7 @@ const deleteSelectedCard = async () => {
         <View style={styles.quickActionsContainer}>
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => handleAction("?")}
+            onPress={() => handleAction("Under Pilot Mode")}
           >
             <View
               style={[
