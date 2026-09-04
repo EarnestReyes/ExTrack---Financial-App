@@ -856,7 +856,7 @@ const deleteSelectedCard = async () => {
             >
               <Text style={styles.actionIcon}>↗</Text>
             </View>
-            <Text style={styles.actionLabel}>???</Text>
+            <Text style={styles.actionLabel}>Credit</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
