@@ -1,11 +1,22 @@
 import * as SQLite from "expo-sqlite";
-import { collection, deleteDoc, doc, setDoc, updateDoc, writeBatch } from "firebase/firestore";
-import { auth, db as firestoreDb } from "./config/firebase";// Adjust path to your firebase config file
+import {
+  collection,
+  deleteDoc,
+  doc,
+  setDoc,
+  writeBatch,
+  query,
+  where,
+  getDocs,
+} from "firebase/firestore";
+import { auth, db as firestoreDb } from "./config/firebase";
 
 const db = SQLite.openDatabaseSync("finance.db");
 
 export interface TransactionItem {
-  id?: number | string;
+  id?: number;
+  firestoreId?: string;
+  loanId?: string | null;
   name: string;
   amount: number;
   type: string;
@@ -96,8 +107,8 @@ export const insertTransactionToDB = (transaction: TransactionItem): number => {
   );
 
   const insertedId = result.lastInsertRowId;
-
   const currentUser = auth.currentUser;
+
   if (currentUser) {
     const userTransactionsRef = collection(
       firestoreDb,
@@ -106,7 +117,6 @@ export const insertTransactionToDB = (transaction: TransactionItem): number => {
       "transactions"
     );
 
-    // Auto-generate doc ID for instant insert
     const docRef = doc(userTransactionsRef);
 
     setDoc(docRef, {
@@ -117,16 +127,21 @@ export const insertTransactionToDB = (transaction: TransactionItem): number => {
       category: transaction.category,
       date: transaction.date,
       time: transaction.time,
+      loanId: transaction.loanId || null,
       createdAt: new Date().toISOString(),
-    }).catch((error) => console.error("Error writing transaction to Firestore:", error));
+    }).catch((error) =>
+      console.error("Error writing transaction to Firestore:", error)
+    );
   }
 
   return insertedId;
 };
 
-export const updateTransactionInDB = (transaction: TransactionItem) => {
+export const updateTransactionInDB = async (transaction: TransactionItem): Promise<void> => {
   if (!transaction.id) return;
   initDatabase();
+
+  const numericId = Number(transaction.id);
 
   // 1. Update in local SQLite
   db.runSync(
@@ -138,104 +153,151 @@ export const updateTransactionInDB = (transaction: TransactionItem) => {
       transaction.category,
       transaction.date,
       transaction.time,
-      transaction.id,
+      numericId,
     ]
   );
 
   // 2. Update in Firebase Firestore
   const currentUser = auth.currentUser;
-  if (currentUser) {
-    const docRef = doc(
-      firestoreDb,
-      "users",
-      currentUser.uid,
-      "transactions",
-      transaction.id.toString()
-    );
-
-    updateDoc(docRef, {
-      name: transaction.name,
-      amount: transaction.amount,
-      type: transaction.type,
-      category: transaction.category,
-      date: transaction.date,
-      time: transaction.time,
-      updatedAt: new Date().toISOString(),
-    }).catch((error) => console.error("Error updating transaction in Firestore:", error));
-  }
-};
-
-export const deleteTransactionFromDB = (id: number | string) => {
-  initDatabase();
-
-  // 1. Delete from local SQLite
-  db.runSync("DELETE FROM transactions WHERE id = ?", [id]);
-
-  // 2. Delete from Firebase Firestore
-  const currentUser = auth.currentUser;
-  if (currentUser) {
-    const docRef = doc(
-      firestoreDb,
-      "users",
-      currentUser.uid,
-      "transactions",
-      id.toString()
-    );
-
-    deleteDoc(docRef).catch((error) =>
-      console.error("Error deleting transaction from Firestore:", error)
-    );
-  }
-};
-
-// Batch Sync function to upload all existing local records to Firebase
-export const syncLocalDataToFirebase = async (): Promise<boolean> => {
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    console.warn("Cannot sync: No authenticated user logged in.");
-    return false;
-  }
-
-  const localTransactions = fetchTransactionsFromDB();
-  if (localTransactions.length === 0) {
-    return true;
-  }
+  if (!currentUser) return;
 
   try {
-    const batch = writeBatch(firestoreDb);
-    const userTransactionsRef = collection(
+    const transactionsRef = collection(
       firestoreDb,
       "users",
       currentUser.uid,
       "transactions"
     );
 
-    localTransactions.forEach((transaction) => {
-      // Calling doc() without a second argument forces an auto-generated random unique ID
-      const docRef = doc(userTransactionsRef);
-
-      batch.set(
+    // If firestoreId is provided, update directly; otherwise query by numeric field 'id'
+    if (transaction.firestoreId) {
+      const docRef = doc(transactionsRef, transaction.firestoreId);
+      await setDoc(
         docRef,
         {
-          id: transaction.id, // Keeps the local SQLite ID inside the document body
           name: transaction.name,
           amount: transaction.amount,
           type: transaction.type,
           category: transaction.category,
           date: transaction.date,
           time: transaction.time,
-          syncedAt: new Date().toISOString(),
+          loanId: transaction.loanId || null,
+          updatedAt: new Date().toISOString(),
         },
         { merge: true }
       );
-    });
+    } else {
+      const q = query(transactionsRef, where("id", "==", numericId));
+      const snapshot = await getDocs(q);
 
-    await batch.commit();
-    console.log("All local transactions successfully synced to Firebase!");
-    return true;
+      if (!snapshot.empty) {
+        for (const document of snapshot.docs) {
+          await setDoc(
+            document.ref,
+            {
+              name: transaction.name,
+              amount: transaction.amount,
+              type: transaction.type,
+              category: transaction.category,
+              date: transaction.date,
+              time: transaction.time,
+              loanId: transaction.loanId || null,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+      } else {
+        // Fallback: If document doesn't exist in Firestore, create it using setDoc
+        const docRef = doc(transactionsRef);
+        await setDoc(
+          docRef,
+          {
+            id: numericId,
+            name: transaction.name,
+            amount: transaction.amount,
+            type: transaction.type,
+            category: transaction.category,
+            date: transaction.date,
+            time: transaction.time,
+            loanId: transaction.loanId || null,
+            createdAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      }
+    }
   } catch (error) {
-    console.error("Failed to batch sync local data to Firebase:", error);
-    return false;
+    console.error("Error updating transaction in Firestore:", error);
+  }
+};
+
+export const deleteTransactionFromDB = async (
+  id: number | string,
+  firestoreId?: string,
+  loanId?: string | null
+): Promise<void> => {
+  initDatabase();
+
+  const numericId = Number(id);
+
+  if (!numericId) {
+    console.error("Invalid transaction ID:", id);
+    return;
+  }
+
+  // 1. Delete from local SQLite
+  db.runSync("DELETE FROM transactions WHERE id = ?", [numericId]);
+
+  // 2. Handle Firestore Deletion
+  const currentUser = auth.currentUser;
+  if (!currentUser) return;
+
+  try {
+    // If the transaction is linked to a loan, delete strictly from the loans collection
+    if (loanId) {
+      const loanRef = doc(
+        firestoreDb,
+        "users",
+        currentUser.uid,
+        "loans",
+        loanId
+      );
+      await deleteDoc(loanRef);
+      console.log(`Loan ${loanId} deleted from Firestore loans collection.`);
+      return;
+    }
+
+    // Otherwise, delete from the transactions collection
+    if (firestoreId) {
+      const txRef = doc(
+        firestoreDb,
+        "users",
+        currentUser.uid,
+        "transactions",
+        firestoreId
+      );
+      await deleteDoc(txRef);
+    } else {
+      const transactionsRef = collection(
+        firestoreDb,
+        "users",
+        currentUser.uid,
+        "transactions"
+      );
+      const q = query(transactionsRef, where("id", "==", numericId));
+      const snapshot = await getDocs(q);
+
+      const batch = writeBatch(firestoreDb);
+      snapshot.forEach((document) => {
+        batch.delete(document.ref);
+      });
+      await batch.commit();
+    }
+
+    console.log(`Transaction ${numericId} deleted successfully.`);
+  } catch (error) {
+    console.error("Error deleting record from Firestore:", error);
   }
 };
 

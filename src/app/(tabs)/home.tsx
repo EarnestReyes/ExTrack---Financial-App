@@ -1,7 +1,15 @@
 import DefaultAvatar from "@/assets/images/default-avatar.png";
 import { auth, db } from "@/config/firebase";
 import { useFocusEffect, useRouter } from "expo-router";
-import { collection, doc, onSnapshot } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  onSnapshot,
+  query,
+  where,
+} from "firebase/firestore";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -43,6 +51,7 @@ interface GraphDataItem {
 const { width, height } = Dimensions.get("window");
 
 export default function HomeScreen() {
+  
   const router = useRouter();
   const systemColorScheme = useColorScheme();
   const [isDarkMode, setIsDarkMode] = useState<boolean>(
@@ -80,10 +89,14 @@ export default function HomeScreen() {
     "Year",
   ];
 
-  useEffect(() => {
-    initDatabase();
-    loadTransactions();
-  }, []);
+useEffect(() => {
+  initDatabase();
+  loadTransactions();
+
+  if (currentUser) {
+    processAutomaticLoanPayments();
+  }
+}, [currentUser]);
 
   useFocusEffect(
     useCallback(() => {
@@ -103,66 +116,60 @@ export default function HomeScreen() {
   );
 
   // Real-time listener for Firestore Profile Picture with immediate local cache write
-  useEffect(() => {
-  // Check if both currentUser and db are fully initialized
-  if (!currentUser?.uid || !db) return;
+useEffect(() => {
+  if (!currentUser) return;
 
-  try {
-    // 1. Listen for User Profile Picture changes
-    const userDocRef = doc(db, "users", currentUser.uid);
-    const unsubscribeUser = onSnapshot(
-      userDocRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          const freshPic = data.photoURL || currentUser.photoURL || null;
+  const transactionsRef = collection(
+    db,
+    "users",
+    currentUser.uid,
+    "transactions"
+  );
 
-          if (freshPic) {
-            setProfilePic(freshPic);
-            setUserProfilePicture(freshPic);
-          }
+  const unsubscribe = onSnapshot(
+    transactionsRef,
+    (snapshot) => {
+      const remoteData: TransactionItem[] = snapshot.docs.map(
+        (docItem) => {
+          const data = docItem.data();
+
+          return {
+            id: data.id,
+            firestoreId: docItem.id,
+            name: data.name || "",
+            amount: Number(data.amount) || 0,
+            type: data.type || "",
+            category: data.category || "",
+            date: data.date || "",
+            time: data.time || "",
+            userId: currentUser.uid,
+          };
         }
-      },
-      (error: Error) => {
-        console.error("Error fetching profile picture from Firestore:", error);
-      }
-    );
+      );
 
-    // 2. Listen for Real-Time Transactions changes
-    const transactionsCollectionRef = collection(
-      db,
-      "users",
-      currentUser.uid,
-      "transactions"
-    );
-    const unsubscribeTransactions = onSnapshot(
-      transactionsCollectionRef,
-      (snapshot) => {
-        const remoteData = snapshot.docs.map((docItem) => ({
-          id: docItem.id,
-          ...docItem.data(),
-        })) as TransactionItem[];
+      remoteData.sort((a, b) => {
+        const dateA = new Date(
+          `${a.date}T${a.time || "00:00"}`
+        ).getTime();
 
-        remoteData.sort((a, b) => {
-          const dateA = `${a.date} ${a.time}`;
-          const dateB = `${b.date} ${b.time}`;
-          return dateB.localeCompare(dateA);
-        });
+        const dateB = new Date(
+          `${b.date}T${b.time || "00:00"}`
+        ).getTime();
 
-        setTransactions(remoteData);
-      },
-      (error: Error) => {
-        console.error("Error fetching transactions from Firestore:", error);
-      }
-    );
+        return dateB - dateA;
+      });
 
-    return () => {
-      unsubscribeUser();
-      unsubscribeTransactions();
-    };
-  } catch (err) {
-    console.error("Error initializing Firestore listeners:", err);
-  }
+      setTransactions(remoteData);
+    },
+    (error) => {
+      console.error(
+        "Error listening to transactions:",
+        error
+      );
+    }
+  );
+
+  return unsubscribe;
 }, [currentUser]);
 
   const toggleDarkMode = (value: boolean) => {
@@ -199,39 +206,42 @@ export default function HomeScreen() {
     if (!amount) setAmount("₱");
   };
 
-  const handleSaveTransaction = () => {
-    if (!name.trim() || !amount.trim() || !category) {
-      Alert.alert("Missing Fields", "Please fill out all fields.");
-      return;
-    }
+  const handleSaveTransaction = async () => {
+  if (!name.trim() || !amount.trim() || !category) {
+    Alert.alert("Missing Fields", "Please fill out all fields.");
+    return;
+  }
 
     const numericAmount = parseFloat(amount.replace(/[₱,]/g, ""));
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-      Alert.alert("Invalid Amount", "Please enter a valid amount.");
-      return;
-    }
+  if (isNaN(numericAmount) || numericAmount <= 0) {
+    Alert.alert("Invalid Amount", "Please enter a valid amount.");
+    return;
+  }
 
     const today = new Date();
-    const formattedDate = today.toISOString().split("T")[0];
-    const formattedTime = today.toTimeString().split(" ")[0].substring(0, 5);
-    const existingTransaction = transactions.find(
-      (transaction) => transaction.id === editingTransactionId,
-    );
+  const formattedDate = today.toISOString().split("T")[0];
+  const formattedTime = today.toTimeString().split(" ")[0].substring(0, 5);
+  const existingTransaction = transactions.find(
+    (transaction) => transaction.id === editingTransactionId
+  );
 
-    const transaction = {
-      id: editingTransactionId,
-      name,
-      amount: numericAmount,
-      type,
-      category,
-      date: existingTransaction?.date ?? formattedDate,
-      time: existingTransaction?.time ?? formattedTime,
-    } as TransactionItem;
+  const transaction = {
+    id: editingTransactionId,
+    firestoreId: existingTransaction?.firestoreId, // Pass the Firestore Document ID
+    name,
+    amount: numericAmount,
+    type,
+    category,
+    date: existingTransaction?.date ?? formattedDate,
+    time: existingTransaction?.time ?? formattedTime,
+    userId: currentUser?.uid,
+  } as TransactionItem;
 
+  try {
     if (editingTransactionId) {
-      updateTransactionInDB(transaction);
+      await updateTransactionInDB(transaction);
     } else {
-      insertTransactionToDB(transaction);
+      await insertTransactionToDB(transaction);
     }
 
     setName("");
@@ -239,8 +249,11 @@ export default function HomeScreen() {
     setCategory("");
     setEditingTransactionId(undefined);
     setShowForm(false);
-    loadTransactions();
-  };
+  } catch (error) {
+    console.error("Error saving transaction:", error);
+    Alert.alert("Error", "Failed to save transaction.");
+  }
+};
 
     const openEditTransaction = (transaction: TransactionItem) => {
     setEditingTransactionId(transaction.id ? Number(transaction.id) : undefined);
@@ -471,12 +484,28 @@ export default function HomeScreen() {
     setSelectedTransaction(null);
   };
 
-  const handleDeleteSelectedTransaction = () => {
-    if (!selectedTransaction?.id) return;
-    deleteTransactionFromDB(selectedTransaction.id);
+ const handleDeleteSelectedTransaction = async () => {
+  if (!selectedTransaction?.id) return;
+
+  try {
+    // Pass local id, Firestore transaction document ID, and loanId
+    await deleteTransactionFromDB(
+      selectedTransaction.id,
+      selectedTransaction.firestoreId,
+      selectedTransaction.loanId
+    );
+
+    // Update local React state to reflect immediate deletion
+    setTransactions((current) =>
+      current.filter((t) => t.id !== selectedTransaction.id)
+    );
+
     closeTransactionActions();
-    loadTransactions();
-  };
+  } catch (error) {
+    console.error("Failed to delete transaction:", error);
+    Alert.alert("Error", "Failed to delete transaction from all records.");
+  }
+};
 
   // Draggable FAB with Gesture Distance Check
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -530,6 +559,164 @@ export default function HomeScreen() {
   ).current;
 
   const styles = createStyles(isDarkMode);
+
+  const processAutomaticLoanPayments = async () => {
+  if (!currentUser) return;
+
+  try {
+    const loansRef = collection(
+      db,
+      "users",
+      currentUser.uid,
+      "loans"
+    );
+
+    const loansSnapshot = await getDocs(loansRef);
+
+    const transactionsRef = collection(
+      db,
+      "users",
+      currentUser.uid,
+      "transactions"
+    );
+
+    const now = new Date();
+
+    const todayYear = now.getFullYear();
+    const todayMonth = now.getMonth();
+    const todayDay = now.getDate();
+
+    const todayString = [
+      todayYear,
+      String(todayMonth + 1).padStart(2, "0"),
+      String(todayDay).padStart(2, "0"),
+    ].join("-");
+
+    console.log(`Checking loans for ${todayString}`);
+
+    for (const loanDoc of loansSnapshot.docs) {
+      const loan = loanDoc.data();
+
+      const monthlyPayment = Number(loan.monthlyPayment);
+      const durationMonths = Number(loan.durationMonths);
+
+      if (
+        !loan.startDate ||
+        !monthlyPayment ||
+        monthlyPayment <= 0 ||
+        !durationMonths ||
+        durationMonths <= 0
+      ) {
+        continue;
+      }
+
+      const startDate = new Date(loan.startDate);
+
+      if (isNaN(startDate.getTime())) {
+        console.log(`Invalid start date for loan ${loanDoc.id}`);
+        continue;
+      }
+
+      const loanStartYear = startDate.getFullYear();
+      const loanStartMonth = startDate.getMonth();
+      const paymentDay = startDate.getDate();
+
+      /*
+       * IMPORTANT:
+       * Only create a payment when TODAY is the payment day.
+       *
+       * Example:
+       * Loan date = September 4
+       *
+       * September 4  -> payment
+       * September 5  -> nothing
+       * September 20 -> nothing
+       * October 4     -> payment
+       * November 4    -> payment
+       */
+
+      if (todayDay !== paymentDay) {
+        continue;
+      }
+
+      // Calculate which month/payment this is
+      const monthsSinceStart =
+        (todayYear - loanStartYear) * 12 +
+        (todayMonth - loanStartMonth);
+
+      const paymentNumber = monthsSinceStart + 1;
+
+      // Loan hasn't started yet
+      if (paymentNumber <= 0) {
+        continue;
+      }
+
+      // Loan is already finished
+      if (paymentNumber > durationMonths) {
+        console.log(
+          `${loan.title}: All loan payments completed.`
+        );
+        continue;
+      }
+
+      /*
+       * CHECK IF THIS MONTH'S PAYMENT ALREADY EXISTS
+       */
+      const paymentQuery = query(
+        transactionsRef,
+        where("loanId", "==", loanDoc.id),
+        where("loanPaymentDate", "==", todayString)
+      );
+
+      const existingPaymentSnapshot =
+        await getDocs(paymentQuery);
+
+      // Prevent duplicate payment
+      if (!existingPaymentSnapshot.empty) {
+        console.log(
+          `${loan.title}: Payment #${paymentNumber} already recorded.`
+        );
+        continue;
+      }
+
+      /*
+       * CREATE ONLY ONE PAYMENT
+       */
+      const transactionRef = doc(transactionsRef);
+
+      await setDoc(transactionRef, {
+        id: Date.now(),
+        name: `${loan.title} Loan Payment`,
+        amount: monthlyPayment,
+        type: "Expense",
+        category: "Bills",
+        date: todayString,
+        time: now.toTimeString().slice(0, 5),
+
+        // Loan information
+        loanId: loanDoc.id,
+        loanPaymentDate: todayString,
+        loanPaymentNumber: paymentNumber,
+
+        // Mark as automatic
+        automatic: true,
+
+        createdAt: new Date().toISOString(),
+      });
+
+      console.log(
+        `Created payment #${paymentNumber} for ${loan.title}: ₱${monthlyPayment}`
+      );
+    }
+
+    console.log("Loan payment check completed.");
+  } catch (error) {
+    console.error(
+      "Error processing automatic loan payments:",
+      error
+    );
+  }
+};
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>

@@ -56,7 +56,7 @@ interface Loan {
   startDate: string;
   durationMonths: number;
   remainingMonths: number;
-  accountId: string;
+  accountId?: string;
 }
 
 interface SavedCard {
@@ -101,15 +101,18 @@ export default function ProfileScreen() {
   const [selectedCard, setSelectedCard] = useState<SavedCard | null>(null);
 
  // Loans State
-  const [loanTitle, setLoanTitle] = useState("");
-  const [loanAmount, setLoanAmount] = useState("");
-  const [loanDuration, setLoanDuration] = useState(""); // in months
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [isCreatingLoan, setIsCreatingLoan] = useState(false);
   const [isLoanModalVisible, setIsLoanModalVisible] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
+
+  //updated loans
+  const [loanTitle, setLoanTitle] = useState("");
+  const [loanAmount, setLoanAmount] = useState("");
+  const [loanDuration, setLoanDuration] = useState("");
   const [loanStartDate, setLoanStartDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [isSavingLoan, setIsSavingLoan] = useState(false);
 
     // Automatically calculate end date and total projected cost
   const calculatedEndDate = useMemo(() => {
@@ -324,83 +327,108 @@ export default function ProfileScreen() {
 
   // Bind snapshot listeners safely to currentUser.uid
   useEffect(() => {
-    if (!currentUser?.uid) {
+  if (!currentUser?.uid) {
+    setLoading(false);
+    return;
+  }
+
+  // Define Firestore references
+  const userDocRef = doc(db, "users", currentUser.uid);
+  const loansColRef = collection(db, "users", currentUser.uid, "loans");
+  const cardsColRef = collection(db, "users", currentUser.uid, "cards");
+
+  // 1. Synchronize Profile Data
+  const unsubscribeUser = onSnapshot(
+    userDocRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setProfile((prev) => ({
+          ...prev,
+          displayName:
+            data.displayName ?? currentUser.displayName ?? prev.displayName,
+          email: data.email ?? currentUser.email ?? prev.email,
+          phone: data.phone ?? currentUser.phoneNumber ?? prev.phone,
+          address: data.address ?? prev.address,
+          photoURL: data.photoURL ?? currentUser.photoURL ?? prev.photoURL,
+          tier: data.tier ?? prev.tier,
+          isBiometricEnabled:
+            data.isBiometricEnabled ?? prev.isBiometricEnabled,
+          isNotificationEnabled:
+            data.isNotificationEnabled ?? prev.isNotificationEnabled,
+          birthdate: data.birthdate ?? prev.birthdate,
+          occupation: data.occupation ?? prev.occupation,
+        }));
+      } else {
+        setProfile((prev) => ({
+          ...prev,
+          displayName: currentUser.displayName || prev.displayName,
+          email: currentUser.email || prev.email,
+          phone: currentUser.phoneNumber || prev.phone,
+          photoURL: currentUser.photoURL || prev.photoURL,
+        }));
+      }
       setLoading(false);
-      return;
+    },
+    (error) => {
+      console.error("Error fetching user document:", error);
+      setLoading(false);
     }
+  );
 
-    // Define Firestore references
-    const userDocRef = doc(db, "users", currentUser.uid);
-    const loansColRef = collection(db, "users", currentUser.uid, "loans");
+  // 2. Synchronize Loans
+  const unsubscribeLoans = onSnapshot(
+  loansColRef,
+  (snapshot) => {
+    const fetchedLoans: Loan[] = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        title: data.title ?? "Personal Loan",
+        totalAmount: Number(data.totalAmount) || 0,
+        monthlyDeduction: Number(data.monthlyPayment) || Number(data.monthlyDeduction) || 0,
+        startDate: data.startDate ?? new Date().toISOString().split("T")[0],
+        endDate: data.endDate ?? "",
+        annualExpense: Number(data.annualExpense) || 0,
+        durationMonths: Number(data.durationMonths) || 1,
+        remainingMonths: Number(data.remainingMonths) || 0,
+        accountId: data.accountId ?? "", // 👈 Satisfies type check
+      };
+    });
+    setLoans(fetchedLoans);
+  },
+  (error) => {
+    console.error("Error fetching loans:", error);
+  }
+);
 
-    // 1. Synchronize Profile Data
-    const unsubscribeUser = onSnapshot(
-      userDocRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setProfile((prev) => ({
-            ...prev,
-            displayName:
-              data.displayName ?? currentUser.displayName ?? prev.displayName,
-            email: data.email ?? currentUser.email ?? prev.email,
-            phone: data.phone ?? currentUser.phoneNumber ?? prev.phone,
-            address: data.address ?? prev.address,
-            photoURL: data.photoURL ?? currentUser.photoURL ?? prev.photoURL,
-            tier: data.tier ?? prev.tier,
-            isBiometricEnabled:
-              data.isBiometricEnabled ?? prev.isBiometricEnabled,
-            isNotificationEnabled:
-              data.isNotificationEnabled ?? prev.isNotificationEnabled,
-            birthdate: data.birthdate ?? prev.birthdate,
-            occupation: data.occupation ?? prev.occupation,
-          }));
-        } else {
-          setProfile((prev) => ({
-            ...prev,
-            displayName: currentUser.displayName || prev.displayName,
-            email: currentUser.email || prev.email,
-            phone: currentUser.phoneNumber || prev.phone,
-            photoURL: currentUser.photoURL || prev.photoURL,
-          }));
-        }
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Error fetching user document:", error);
-        setLoading(false);
-      }
-    );
+// 3. Synchronize Cards
+const unsubscribeCards = onSnapshot(
+  cardsColRef,
+  (snapshot) => {
+    const fetchedCards: SavedCard[] = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data();
+      return {
+        id: docSnap.id,
+        name: data.name ?? "",
+        type: data.type ?? "Card",
+        lastFour: data.lastFour ?? "0000",
+        expiry: data.expiry ?? "MM/YY",
+      };
+    });
+    setCards(fetchedCards);
+  },
+  (error) => {
+    console.error("Error fetching cards:", error);
+  }
+);
 
-    // 2. Synchronize Loans
-    const unsubscribeLoans = onSnapshot(
-      loansColRef,
-      (snapshot) => {
-        const fetchedLoans: Loan[] = snapshot.docs.map((docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            title: data.title ?? "Personal Loan",
-            totalAmount: Number(data.totalAmount) || 0,
-            monthlyDeduction: Number(data.monthlyDeduction) || 0,
-            startDate: data.startDate ?? new Date().toISOString().split("T")[0],
-            durationMonths: Number(data.durationMonths) || 1,
-            remainingMonths: Number(data.remainingMonths) || 0,
-            accountId: data.accountId ?? "",
-          };
-        });
-        setLoans(fetchedLoans);
-      },
-      (error) => {
-        console.error("Error fetching loans:", error);
-      }
-    );
-
-    return () => {
-      unsubscribeUser();
-      unsubscribeLoans();
-    };
-  }, [currentUser?.uid]);
+  return () => {
+    unsubscribeUser();
+    unsubscribeLoans();
+    unsubscribeCards();
+  };
+}, [currentUser?.uid]);
 
   const openEditModal = () => {
     setEditForm({
@@ -501,32 +529,89 @@ export default function ProfileScreen() {
     }
   };
 
+  const handleSaveLoan = async () => {
+  if (!currentUser) return;
+
+  // 1. Parse string inputs to numbers
+  const parsedAmount = parseFloat(loanAmount) || 0;
+  const parsedDuration = parseInt(loanDuration, 10) || 0;
+
+  if (!loanTitle.trim() || parsedAmount <= 0 || parsedDuration <= 0) {
+    Alert.alert(
+      "Incomplete Details",
+      "Please provide a loan title, valid total amount, and duration in months."
+    );
+    return;
+  }
+
+  // 2. Calculate End Date
+  const loanEndDate = new Date(loanStartDate);
+  loanEndDate.setMonth(loanEndDate.getMonth() + parsedDuration);
+
+  // 3. Calculate Annual Expense
+  const monthlyPayment = parsedAmount / parsedDuration;
+  const annualExpense = monthlyPayment * Math.min(parsedDuration, 12);
+
+  setIsSavingLoan(true);
+
+  try {
+    const loanData = {
+      title: loanTitle.trim(),
+      totalAmount: parsedAmount,
+      durationMonths: parsedDuration,
+      startDate: loanStartDate.toISOString(),
+      endDate: loanEndDate.toISOString(),
+      annualExpense: annualExpense,
+      monthlyPayment: monthlyPayment,
+      createdAt: new Date().toISOString(),
+    };
+
+    await addDoc(
+      collection(db, "users", currentUser.uid, "loans"),
+      loanData
+    );
+
+    setLoanTitle("");
+    setLoanAmount("");
+    setLoanDuration("");
+    setLoanStartDate(new Date());
+    setIsLoanModalVisible(false);
+
+    Alert.alert("Loan Tracked", "Your loan record was saved successfully.");
+  } catch (error) {
+    console.error("Error saving loan:", error);
+    Alert.alert("Error", "Unable to record loan right now.");
+  } finally {
+    setIsSavingLoan(false);
+  }
+};
+
   const handleAction = (title: string) => {
-    if (title === "Loan") {
-      setIsLoanModalVisible(true);
-      return;
-    }
-    if (title === "Manage Cards") {
-      Alert.alert(
-        "Add a card",
-        "Would you like to add a card to your ExTrack account?",
-        [
-          { text: "No", style: "cancel" },
-          { text: "Yes", onPress: () => setIsCardModalVisible(true) },
-        ],
-      );
-      return;
-    }
-    if (title === "Bank Documents") {
-      router.push("/statements");
-      return;
-    }
-    if (title === "Help & Support") {
-      router.push("/help");
-      return;
-    }
-    Alert.alert(title, `Navigating to ${title}...`);
-  };
+  if (title === "Loan") {
+    setIsLoanModalVisible(true);
+    return;
+  }
+  if (title === "Manage Cards") {
+    Alert.alert(
+      "Add a card",
+      "Would you like to add a card to your ExTrack account?",
+      [
+        { text: "No", style: "cancel" },
+        { text: "Yes", onPress: () => setIsCardModalVisible(true) },
+      ],
+    );
+    return;
+  }
+  if (title === "Bank Documents") {
+    router.push("/statements");
+    return;
+  }
+  if (title === "Help & Support") {
+    router.push("/help");
+    return;
+  }
+  Alert.alert(title, `Navigating to ${title}...`);
+};
 
   const closeCardModal = () => {
     setIsCardModalVisible(false);
@@ -773,69 +858,85 @@ export default function ProfileScreen() {
   onRequestClose={() => setIsLoanModalVisible(false)}
 >
   <View style={modalStyles.overlay}>
-    <View style={modalStyles.container}>
-      <Text style={modalStyles.title}>Schedule New Loan</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={{ width: "100%" }}
+    >
+      <View style={modalStyles.container}>
+        <Text style={modalStyles.title}>Track New Loan</Text>
 
-      <Text style={modalStyles.label}>Loan Title / Description</Text>
-      <TextInput
-        style={modalStyles.input}
-        placeholder="e.g. Car Loan, Emergency Fund"
-        placeholderTextColor="#9ca3af"
-        value={loanTitle}
-        onChangeText={setLoanTitle}
-      />
-
-      <Text style={modalStyles.label}>Total Amount</Text>
-      <TextInput
-        style={modalStyles.input}
-        placeholder="0.00"
-        placeholderTextColor="#9ca3af"
-        keyboardType="numeric"
-        value={loanAmount}
-        onChangeText={setLoanAmount}
-      />
-
-      <Text style={modalStyles.label}>Duration (Months)</Text>
-      <TextInput
-        style={modalStyles.input}
-        placeholder="e.g. 12"
-        placeholderTextColor="#9ca3af"
-        keyboardType="number-pad"
-        value={loanDuration}
-        onChangeText={setLoanDuration}
-      />
-
-      {/* Start Date Picker Button */}
-      <Text style={modalStyles.label}>Start Date</Text>
-      <TouchableOpacity
-        style={modalStyles.datePickerButton}
-        onPress={() => setShowDatePicker(true)}
-      >
-        <Ionicons name="calendar-outline" size={18} color="#4b5563" />
-        <Text style={modalStyles.datePickerText}>
-          {loanStartDate.toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          })}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Date Picker Component */}
-      {showDatePicker && (
-        <DateTimePicker
-          value={loanStartDate}
-          mode="date"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-            setShowDatePicker(Platform.OS === "ios");
-            if (selectedDate) setLoanStartDate(selectedDate);
-          }}
+        <Text style={modalStyles.label}>Loan Title / Description</Text>
+        <TextInput
+          style={modalStyles.input}
+          placeholder="e.g. Car Loan, Emergency Fund"
+          placeholderTextColor="#9ca3af"
+          value={loanTitle}
+          onChangeText={setLoanTitle}
         />
-      )}
 
-      {/* Dynamic Summary Card */}
-      <View style={modalStyles.summaryCard}>
+        <Text style={modalStyles.label}>Total Amount (₱)</Text>
+        <TextInput
+          style={modalStyles.input}
+          placeholder="0.00"
+          placeholderTextColor="#9ca3af"
+          keyboardType="numeric"
+          value={loanAmount}
+          onChangeText={setLoanAmount}
+        />
+
+        <Text style={modalStyles.label}>Duration (Months)</Text>
+        <TextInput
+          style={modalStyles.input}
+          placeholder="e.g. 12"
+          placeholderTextColor="#9ca3af"
+          keyboardType="number-pad"
+          value={loanDuration}
+          onChangeText={setLoanDuration}
+        />
+
+        {/* Start Date Picker Button */}
+            <Text style={modalStyles.label}>Start Date</Text>
+            <TouchableOpacity
+              style={modalStyles.datePickerButton}
+              onPress={() => setShowDatePicker((prev) => !prev)}
+            >
+              <Ionicons name="calendar-outline" size={18} color="#4b5563" />
+              <Text style={modalStyles.datePickerText}>
+                {loanStartDate.toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Date Picker Component */}
+            {showDatePicker && (
+              <DateTimePicker
+                value={loanStartDate}
+                mode="date"
+                display={Platform.OS === "ios" ? "inline" : "default"}
+                onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                  // 1. Android native dialogs close automatically on confirm or cancel
+                  if (Platform.OS === "android") {
+                    setShowDatePicker(false);
+                  }
+
+                  // 2. Update state while keeping the inline component open on iOS
+                  if (selectedDate) {
+                    setLoanStartDate(selectedDate);
+                  }
+                  
+                  // 3. Close if the native modal was explicitly dismissed
+                  if (event.type === "dismissed") {
+                    setShowDatePicker(false);
+                  }
+                }}
+              />
+            )}
+
+        {/* Dynamic Summary Card */}
+        <View style={modalStyles.summaryCard}>
         <View style={modalStyles.summaryRow}>
           <Text style={modalStyles.summaryLabel}>End Date:</Text>
           <Text style={modalStyles.summaryValue}>
@@ -849,61 +950,38 @@ export default function ProfileScreen() {
           </Text>
         </View>
         <View style={modalStyles.summaryRow}>
-          <Text style={modalStyles.summaryLabel}>Total Expense:</Text>
+          <Text style={modalStyles.summaryLabel}>Total Loan Cost:</Text>
           <Text style={modalStyles.summaryValueBold}>
-            ₱{totalExpense.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            ₱{((parseFloat(loanAmount) || 0) * (parseInt(loanDuration, 10) || 0)).toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </Text>
         </View>
       </View>
 
-      <Text style={modalStyles.label}>Select Account for Deductions</Text>
-      {accounts.length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
-          {accounts.map((acc) => (
-            <TouchableOpacity
-              key={acc.id}
-              style={[
-                modalStyles.accountChip,
-                selectedAccountId === acc.id && modalStyles.accountChipSelected,
-              ]}
-              onPress={() => setSelectedAccountId(acc.id)}
-            >
-              <Text
-                style={[
-                  modalStyles.accountChipText,
-                  selectedAccountId === acc.id && modalStyles.accountChipTextSelected,
-                ]}
-              >
-                {acc.name} (₱{acc.balance.toLocaleString()})
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      ) : (
-        <Text style={modalStyles.errorText}>
-          ⚠️ No active accounts found. Please create an account first.
-        </Text>
-      )}
+        {/* Action Buttons */}
+        <View style={modalStyles.buttonContainer}>
+          <TouchableOpacity
+            style={[modalStyles.button, modalStyles.cancelButton]}
+            onPress={() => setIsLoanModalVisible(false)}
+            disabled={isSavingLoan}
+          >
+            <Text style={modalStyles.buttonTextCancel}>Cancel</Text>
+          </TouchableOpacity>
 
-      <View style={modalStyles.buttonContainer}>
-        <TouchableOpacity
-          style={[modalStyles.button, modalStyles.cancelButton]}
-          onPress={() => setIsLoanModalVisible(false)}
-        >
-          <Text style={modalStyles.buttonTextCancel}>Cancel</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[modalStyles.button, modalStyles.submitButton]}
-          onPress={handleCreateLoan}
-          disabled={isCreatingLoan}
-        >
-          <Text style={modalStyles.buttonText}>
-            {isCreatingLoan ? "Processing..." : "Save Loan"}
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[modalStyles.button, modalStyles.submitButton]}
+            onPress={handleSaveLoan}
+            disabled={isSavingLoan}
+          >
+            <Text style={modalStyles.buttonText}>
+              {isSavingLoan ? "Saving..." : "Save Record"}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   </View>
 </Modal>
 
@@ -1849,7 +1927,7 @@ const modalStyles = StyleSheet.create({
     padding: 12,
     marginBottom: 14,
     fontSize: 16,
-    color: '#6b7280'
+    color: '#C6C9CE'
   },
   accountChip: {
     paddingHorizontal: 14,
@@ -1941,13 +2019,13 @@ summaryValueBold: {
   color: "#166534",
 },
 errorText: {
-  color: "#ef4444",
+  color: "#CE1E1E",
   marginBottom: 15,
   fontSize: 13,
 },
 buttonTextCancel: {
   fontWeight: "600",
   fontSize: 15,
-  color: "#4b5563",
+  color: "#F6F6F7",
 },
 });
