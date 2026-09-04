@@ -191,15 +191,6 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            {/* BIOMETRIC LOGIN BUTTON */}
-            <TouchableOpacity
-              style={[styles.biometricButton, loading && styles.loginButtonDisabled]}
-              onPress={handleBiometricLogin}
-              disabled={loading}
-            >
-              <Text style={styles.biometricButtonText}>🔐 Use Face ID / Fingerprint</Text>
-            </TouchableOpacity>
-
             {/* REGISTER LINK */}
             <View style={styles.registerContainer}>
               <Text style={styles.registerText}>Don't have an account?</Text>
