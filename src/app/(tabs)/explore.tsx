@@ -4,6 +4,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { clearAllDataAndDatabase } from "../../database";
 
 import {
   addDoc,
@@ -325,6 +326,30 @@ export default function ProfileScreen() {
     ]);
   };
 
+  const handleClearCashe = () => {
+  Alert.alert(
+    "Log Out & Clear Data",
+    "Are you sure you want to log out? This will clear your local storage and Firestore data.",
+    [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Log Out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            // Clear local SQLite and remote Firestore first
+            await clearAllDataAndDatabase();
+            // Perform logout process
+            await logout();
+          } catch (error) {
+            Alert.alert("Error", "Failed to complete log out and data cleanup.");
+          }
+        },
+      },
+    ]
+  );
+};
+
   // Bind snapshot listeners safely to currentUser.uid
   useEffect(() => {
   if (!currentUser?.uid) {
@@ -610,21 +635,23 @@ const unsubscribeCards = onSnapshot(
     router.push("/help");
     return;
   }
-  Alert.alert(title, `Navigating to ${title}...`);
+  Alert.alert(title, `This feature is under construction, Thank you for your understanding!`);
 };
 
-  const closeCardModal = () => {
-    setIsCardModalVisible(false);
-    setEditingCardId(null);
-    setCardName("");
-    setCardType("Debit");
-    setCardLastFour("");
-    setCardExpiry("");
-  };
+  // Ensure closeCardModal is defined ONLY ONCE in the component
+const closeCardModal = () => {
+  setIsCardModalVisible(false);
+  setEditingCardId(null);
+  setCardName("");
+  setCardType("Debit");
+  setCardLastFour("");
+  setCardExpiry("");
+};
 
-  const handleSaveCard = async () => {
+const handleSaveCard = async () => {
   if (!currentUser) return;
   const cleanLastFour = cardLastFour.replace(/\D/g, "");
+  
   if (
     !cardName.trim() ||
     cleanLastFour.length !== 4 ||
@@ -647,36 +674,25 @@ const unsubscribeCards = onSnapshot(
     };
 
     if (editingCardId) {
-      // 1. Update Firestore
       await updateDoc(
         doc(db, "users", currentUser.uid, "cards", editingCardId),
         cardData
       );
-
-      // 2. Update local state immediately if not using real-time listener
-      setCards((prevCards) =>
-        prevCards.map((card) =>
-          card.id === editingCardId ? { ...card, ...cardData } : card
-        )
-      );
     } else {
-      // 1. Add to Firestore
-      const docRef = await addDoc(
+      await addDoc(
         collection(db, "users", currentUser.uid, "cards"),
         {
           ...cardData,
           createdAt: new Date().toISOString(),
         }
       );
-
-      // 2. Append to local state immediately if not using real-time listener
-      const newCard = { id: docRef.id, ...cardData };
-      setCards((prevCards) => [newCard, ...prevCards]);
     }
 
+    const isEdit = Boolean(editingCardId);
     closeCardModal();
+
     Alert.alert(
-      editingCardId ? "Card updated" : "Card added",
+      isEdit ? "Card updated" : "Card added",
       "Your card summary was saved successfully."
     );
   } catch (error) {
@@ -687,28 +703,29 @@ const unsubscribeCards = onSnapshot(
   }
 };
 
-  const openEditCard = (card: SavedCard) => {
-    setEditingCardId(card.id);
-    setCardName(card.name);
-    setCardType(card.type);
-    setCardLastFour(card.lastFour);
-    setCardExpiry(card.expiry);
-    setSelectedCard(null);
-    setIsCardModalVisible(true);
-  };
+const openEditCard = (card: SavedCard) => {
+  setEditingCardId(card.id);
+  setCardName(card.name);
+  setCardType(card.type);
+  setCardLastFour(card.lastFour);
+  setCardExpiry(card.expiry);
+  setSelectedCard(null);
+  setIsCardModalVisible(true);
+};
 
-  const deleteSelectedCard = async () => {
-    if (!currentUser || !selectedCard) return;
-    try {
-      await deleteDoc(
-        doc(db, "users", currentUser.uid, "cards", selectedCard.id),
-      );
-      setSelectedCard(null);
-    } catch (error) {
-      console.error("Error deleting card:", error);
-      Alert.alert("Error", "Unable to delete this card right now.");
-    }
-  };
+const deleteSelectedCard = async () => {
+  if (!currentUser || !selectedCard) return;
+
+  try {
+    await deleteDoc(
+      doc(db, "users", currentUser.uid, "cards", selectedCard.id)
+    );
+    setSelectedCard(null);
+  } catch (error) {
+    console.error("Error deleting card:", error);
+    Alert.alert("Error", "Unable to delete this card right now.");
+  }
+};
 
   const openAnalytics = () => {
     setTransactions(fetchTransactionsFromDB());
@@ -823,7 +840,7 @@ const unsubscribeCards = onSnapshot(
         <View style={styles.quickActionsContainer}>
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => handleAction("Send Money")}
+            onPress={() => handleAction("?")}
           >
             <View
               style={[
@@ -833,7 +850,7 @@ const unsubscribeCards = onSnapshot(
             >
               <Text style={styles.actionIcon}>↗</Text>
             </View>
-            <Text style={styles.actionLabel}>Send</Text>
+            <Text style={styles.actionLabel}>???</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -874,7 +891,7 @@ const unsubscribeCards = onSnapshot(
           onChangeText={setLoanTitle}
         />
 
-        <Text style={modalStyles.label}>Total Amount (₱)</Text>
+        <Text style={modalStyles.label}>Monthly Amount (₱)</Text>
         <TextInput
           style={modalStyles.input}
           placeholder="0.00"
@@ -1152,6 +1169,11 @@ const unsubscribeCards = onSnapshot(
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Log Out</Text>
         </TouchableOpacity>
+
+        {/* CLEAR BUTTON */}
+        <TouchableOpacity style={styles.clearButton} onPress={handleClearCashe}>
+          <Text style={styles.clearButtonText}>Clear Cashe</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       <Modal
@@ -1289,10 +1311,12 @@ const unsubscribeCards = onSnapshot(
               <TextInput
                 style={styles.input}
                 value={cardName}
-                onChangeText={(value) =>
-                  setCardName(value.replace(/[0-9]/g, ""))
-                }
-                placeholder="e.g. Main debit card"
+                onChangeText={(value) => {
+                  const lettersOnly = value.replace(/[0-9]/g, "");
+                  const capitalized = lettersOnly.replace(/\b\w/g, (char) => char.toUpperCase());
+                  setCardName(capitalized);
+                }}
+                placeholder="e.g. Main Debit Card"
                 placeholderTextColor="#94a3b8"
                 autoCapitalize="words"
               />
@@ -1348,7 +1372,7 @@ const unsubscribeCards = onSnapshot(
                 }}
                 placeholder="12/30"
                 placeholderTextColor="#94a3b8"
-                keyboardType="default"
+                keyboardType="number-pad"
                 autoCapitalize="none"
                 autoCorrect={false}
                 maxLength={5}
@@ -1630,6 +1654,19 @@ const createStyles = (isDarkMode: boolean) => {
       backgroundColor: "rgba(15, 23, 42, 0.58)",
       justifyContent: "flex-end",
     },
+
+    clearButton: {
+      backgroundColor: "#F0E43C15",
+      borderWidth: 1,
+      borderColor: "#F1FD3F40",
+      borderRadius: 14,
+      paddingVertical: 14,
+      alignItems: "center",
+      marginTop: 10,
+    },
+    
+    clearButtonText: { color: "#ACB6BB", fontSize: 15, fontWeight: "700" },
+  
     analyticsContent: {
       backgroundColor: backgroundColor,
       borderTopLeftRadius: 24,

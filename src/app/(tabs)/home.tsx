@@ -32,6 +32,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import {
   deleteTransactionFromDB,
   fetchTransactionsFromDB,
+  LoanItem,
+  fetchLoansFromDB,
   getThemePreference,
   getUserProfilePicture,
   initDatabase,
@@ -40,6 +42,7 @@ import {
   setUserProfilePicture, // <--- Change this
   TransactionItem,
   updateTransactionInDB,
+  deleteLoanFromDB, 
 } from "../../database";
 
 interface GraphDataItem {
@@ -71,116 +74,209 @@ export default function HomeScreen() {
   const [type, setType] = useState<"Income" | "Expense">("Expense");
   const [category, setCategory] = useState("");
 
-  // View States
-  const [filter, setFilter] = useState("All");
-  const [overviewPeriod, setOverviewPeriod] = useState<
-    "Day" | "Week" | "Month" | "Year"
-  >("Month");
-  const [balancePeriod, setBalancePeriod] =
-    useState<typeof overviewPeriod>("Month");
-  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-  const [selectedTransaction, setSelectedTransaction] =
-    useState<TransactionItem | null>(null);
+ // View States
+const [filter, setFilter] = useState("All");
+const [overviewPeriod, setOverviewPeriod] = useState<
+  "Day" | "Week" | "Month" | "Year"
+>("Month");
+const [balancePeriod, setBalancePeriod] =
+  useState<typeof overviewPeriod>("Month");
+const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+// 1. Updated state type to LoanItem[] and standard camelCase naming
+const [loans, setLoanList] = useState<LoanItem[]>([]);
+const [selectedLoan, setSelectedLoan] = useState<LoanItem | null>(null);
+const [loan, setLoans] = useState<LoanItem[]>([]);
+const [selectedLoans, setSelectedLoans] = useState<LoanItem | null>(null);
 
-  const overviewPeriods: Array<typeof overviewPeriod> = [
-    "Day",
-    "Week",
-    "Month",
-    "Year",
-  ];
+const [selectedTransaction, setSelectedTransaction] =
+  useState<TransactionItem | null>(null);
+
+const overviewPeriods: Array<typeof overviewPeriod> = [
+  "Day",
+  "Week",
+  "Month",
+  "Year",
+];
 
 useEffect(() => {
   initDatabase();
   loadTransactions();
+  loadLoans(); // 2. Call loadLoans on component mount
 
   if (currentUser) {
     processAutomaticLoanPayments();
   }
 }, [currentUser]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const savedTheme = getThemePreference();
-      if (savedTheme !== null) {
-        setIsDarkMode(savedTheme === "dark");
-      } else {
-        setIsDarkMode(systemColorScheme === "dark");
-      }
+useFocusEffect(
+  useCallback(() => {
+    const savedTheme = getThemePreference();
+    if (savedTheme !== null) {
+      setIsDarkMode(savedTheme === "dark");
+    } else {
+      setIsDarkMode(systemColorScheme === "dark");
+    }
 
-      // Fetch profile picture from local DB fallback immediately on screen focus
-      const dbProfilePic = getUserProfilePicture();
-      if (dbProfilePic) {
-        setProfilePic(dbProfilePic);
-      }
-    }, [systemColorScheme]),
-  );
+    // Fetch profile picture from local DB fallback immediately on screen focus
+  const localPic = getUserProfilePicture();
+  if (localPic) {
+    setProfilePic(localPic);
+  }
 
-  // Real-time listener for Firestore Profile Picture with immediate local cache write
+    // 3. Refresh local SQLite data whenever screen gains focus
+    loadTransactions();
+    loadLoans();
+  }, [systemColorScheme]),
+);
+
+// Real-time listener for Firestore Profile Picture / Transactions / Loans
+const formatProfilePicUri = (rawPic: string | null): string | null => {
+  if (!rawPic) return null;
+  const trimmed = rawPic.trim();
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("file://") ||
+    trimmed.startsWith("data:image/")
+  ) {
+    return trimmed;
+  }
+  return `data:image/jpeg;base64,${trimmed}`;
+};
+
+// ==========================================
+// Focus Effect for Local Storage Fallback
+// ==========================================
+useFocusEffect(
+  useCallback(() => {
+    const savedTheme = getThemePreference();
+    if (savedTheme !== null) {
+      setIsDarkMode(savedTheme === "dark");
+    } else {
+      setIsDarkMode(systemColorScheme === "dark");
+    }
+
+    // Fetch profile picture from local SQLite DB immediately on screen focus
+    const localPic = getUserProfilePicture();
+    if (localPic) {
+      setProfilePic(formatProfilePicUri(localPic));
+    }
+
+    // Refresh local SQLite data whenever screen gains focus
+    loadTransactions();
+    loadLoans();
+  }, [systemColorScheme])
+);
+
+// ==========================================
+// Real-time Firestore Listeners
+// ==========================================
 useEffect(() => {
   if (!currentUser) return;
 
-  const transactionsRef = collection(
-    db,
-    "users",
-    currentUser.uid,
-    "transactions"
+  const userPath = `users/${currentUser.uid}`;
+  const userDocRef = doc(db, "users", currentUser.uid);
+
+  // 1. Real-time Firestore Listener for User Profile Updates
+  const unsubscribeUserDoc = onSnapshot(
+    userDocRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const userData = docSnap.data();
+        const photoURL = userData?.photoURL || userData?.profilePic;
+        if (photoURL) {
+          const formattedPic = formatProfilePicUri(photoURL);
+          setProfilePic(formattedPic);
+        }
+      }
+    },
+    (error) => {
+      console.error("Error listening to user profile:", error);
+    }
   );
 
-  const unsubscribe = onSnapshot(
+  // 2. Real-time Listener for Transactions
+  const transactionsRef = collection(db, userPath, "transactions");
+  const unsubscribeTransactions = onSnapshot(
     transactionsRef,
     (snapshot) => {
-      const remoteData: TransactionItem[] = snapshot.docs.map(
-        (docItem) => {
-          const data = docItem.data();
-
-          return {
-            id: data.id,
-            firestoreId: docItem.id,
-            name: data.name || "",
-            amount: Number(data.amount) || 0,
-            type: data.type || "",
-            category: data.category || "",
-            date: data.date || "",
-            time: data.time || "",
-            userId: currentUser.uid,
-          };
-        }
-      );
+      const remoteData: TransactionItem[] = snapshot.docs.map((docItem) => {
+        const data = docItem.data();
+        return {
+          id: data.id,
+          firestoreId: docItem.id,
+          name: data.name || "",
+          amount: Number(data.amount) || 0,
+          type: data.type || "",
+          category: data.category || "",
+          date: data.date || "",
+          time: data.time || "",
+          userId: currentUser.uid,
+        };
+      });
 
       remoteData.sort((a, b) => {
-        const dateA = new Date(
-          `${a.date}T${a.time || "00:00"}`
-        ).getTime();
-
-        const dateB = new Date(
-          `${b.date}T${b.time || "00:00"}`
-        ).getTime();
-
+        const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime();
+        const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime();
         return dateB - dateA;
       });
 
       setTransactions(remoteData);
     },
     (error) => {
-      console.error(
-        "Error listening to transactions:",
-        error
-      );
+      console.error("Error listening to transactions:", error);
     }
   );
 
-  return unsubscribe;
+  // 3. Real-time Listener for Loans
+  const loansRef = collection(db, userPath, "loans");
+  const unsubscribeLoans = onSnapshot(
+    loansRef,
+    (snapshot) => {
+      const remoteLoans: LoanItem[] = snapshot.docs.map((docItem) => {
+        const data = docItem.data();
+        return {
+          id: data.id,
+          firestoreId: docItem.id,
+          title: data.title || "",
+          totalAmount: Number(data.totalAmount) || 0,
+          monthlyPayment: Number(data.monthlyPayment) || 0,
+          annualExpense: Number(data.annualExpense) || 0,
+          durationMonths: Number(data.durationMonths) || 0,
+          startDate: data.startDate || "",
+          endDate: data.endDate || "",
+          createdAt: data.createdAt || "",
+        };
+      });
+
+      setLoanList(remoteLoans);
+    },
+    (error) => {
+      console.error("Error listening to loans:", error);
+    }
+  );
+
+  return () => {
+    unsubscribeUserDoc();
+    unsubscribeTransactions();
+    unsubscribeLoans();
+  };
 }, [currentUser]);
 
-  const toggleDarkMode = (value: boolean) => {
-    setIsDarkMode(value);
-    setThemePreference(value ? "dark" : "light");
-  };
+const toggleDarkMode = (value: boolean) => {
+  setIsDarkMode(value);
+  setThemePreference(value ? "dark" : "light");
+};
 
-  const loadTransactions = () => {
-    const dbData = fetchTransactionsFromDB();
-    setTransactions(dbData);
-  };
+const loadTransactions = () => {
+  const dbData = fetchTransactionsFromDB();
+  setTransactions(dbData);
+};
+
+const loadLoans = () => {
+  const dbData = fetchLoansFromDB();
+  setLoans(dbData);
+};
 
   const formatAmountInput = (value: string) => {
     const hasPesoPrefix = value.includes("₱");
@@ -277,11 +373,14 @@ useEffect(() => {
     .filter((t) => t.type === "Income")
     .reduce((total, t) => total + t.amount, 0);
 
-  const totalExpenses = transactions
+  const totalExpenses = Number(
+  transactions
     .filter((t) => t.type === "Expense")
-    .reduce((total, t) => total + t.amount, 0);
+    .reduce((total, t) => total + t.amount, 0)
+    .toFixed(2)
+);
 
-  const availableBalance = totalIncome - totalExpenses;
+const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
 
   // Chart Data Processing
   const today = new Date();
@@ -479,6 +578,11 @@ useEffect(() => {
   const handleTransactionPress = (transaction: TransactionItem) => {
     setSelectedTransaction(transaction);
   };
+
+const handleLoanPress = (loanItem: LoanItem) => {
+  setSelectedLoan(loanItem);
+};
+
 
   const closeTransactionActions = () => {
     setSelectedTransaction(null);
@@ -718,6 +822,60 @@ useEffect(() => {
   }
 };
 
+const closeLoanActions = () => {
+  setSelectedLoan(null);
+};
+
+const handleDeleteSelectedLoan = async () => {
+  if (!selectedLoan) return;
+
+  const numericId = selectedLoan.id ? Number(selectedLoan.id) : undefined;
+  const firestoreId = selectedLoan.firestoreId;
+
+  // 1. Check if at least ONE valid identifier exists
+  const hasValidNumericId = numericId !== undefined && !isNaN(numericId) && numericId > 0;
+  const hasValidFirestoreId = Boolean(firestoreId);
+
+  if (!hasValidNumericId && !hasValidFirestoreId) {
+    Alert.alert("Error", "Invalid Loan ID. Cannot delete this record.");
+    console.error("Delete failed: No valid loan ID provided ->", selectedLoan);
+    return;
+  }
+
+  // 2. Prompt confirmation and execute deletion
+  Alert.alert(
+    "Delete Loan",
+    "Are you sure you want to delete this active loan?",
+    [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            // Call updated database function passing both potential keys
+            await deleteLoanFromDB(numericId, firestoreId);
+
+            // Update UI local state immediately
+            setLoans((current: LoanItem[]) =>
+              current.filter((l: LoanItem) => {
+                if (firestoreId && l.firestoreId === firestoreId) return false;
+                if (numericId && l.id === numericId) return false;
+                return true;
+              })
+            );
+
+            closeLoanActions();
+          } catch (error) {
+            console.error("Failed to delete loan:", error);
+            Alert.alert("Error", "Failed to delete loan from records.");
+          }
+        },
+      },
+    ]
+  );
+};
+
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <ScrollView
@@ -759,13 +917,13 @@ useEffect(() => {
           </Text>
           <View style={styles.statsRow}>
             <View>
-              <Text style={styles.statsLabel}>Income</Text>
+              <Text style={styles.statsLabel}>Incoming</Text>
               <Text style={styles.incomeText}>
                 +₱{totalIncome.toLocaleString()}
               </Text>
             </View>
             <View>
-              <Text style={styles.statsLabel}>Expenses</Text>
+              <Text style={styles.statsLabel}>Outgoing</Text>
               <Text style={styles.expenseText}>
                 -₱{totalExpenses.toLocaleString()}
               </Text>
@@ -972,46 +1130,120 @@ useEffect(() => {
           ))}
         </View>
 
-        {/* LIST */}
-        {filteredTransactions.length > 0 ? (
-          filteredTransactions.map((item) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.transactionCard}
-              onPress={() => handleTransactionPress(item)}
-              activeOpacity={0.75}
-              accessibilityLabel={`Open actions for ${item.name}`}
-            >
-              <View style={styles.transactionLeft}>
-                <Text style={styles.transactionIcon}>
-                  {getCategoryIcon(item.category)}
-                </Text>
-                <View>
-                  <Text style={styles.transactionName}>{item.name}</Text>
-                  <Text style={styles.transactionCategory}>
-                    {item.category} • {item.date}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.transactionRight}>
-                <Text
-                  style={
-                    item.type === "Income"
-                      ? styles.incomeText
-                      : styles.expenseText
-                  }
-                >
-                  {item.type === "Income" ? "+" : "-"}₱
-                  {item.amount.toLocaleString()}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))
-        ) : (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No transactions found.</Text>
+                {/* LIST TRANSACTIONS */}
+{filteredTransactions.length > 0 ? (
+  filteredTransactions.map((item) => (
+    <TouchableOpacity
+      key={item.id}
+      style={styles.transactionCard}
+      onPress={() => handleTransactionPress(item)}
+      activeOpacity={0.75}
+      accessibilityLabel={`Open actions for ${item.name}`}
+    >
+      <View style={styles.transactionLeft}>
+        <Text style={styles.transactionIcon}>
+          {getCategoryIcon(item.category)}
+        </Text>
+        <View>
+          <Text style={styles.transactionName}>{item.name}</Text>
+          <Text style={styles.transactionCategory}>
+            {item.category} • {item.date}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.transactionRight}>
+        <Text
+          style={
+            item.type === "Income"
+              ? styles.incomeText
+              : styles.expenseText
+          }
+        >
+          {item.type === "Income" ? "+" : "-"}₱
+          {item.amount.toLocaleString()}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  ))
+) : (
+  <View style={styles.emptyContainer}>
+    <Text style={styles.emptyText}>No Transactions Found.</Text>
+  </View>
+)}
+
+{/* ACTIVE LOANS LIST */}
+{loans && loans.length > 0 && (
+  <>
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>Active Loans</Text>
+    </View>
+
+    {loans.map((item, index) => (
+      <TouchableOpacity
+        key={item.id || item.firestoreId || `loan-${index}`}
+        style={styles.transactionCard}
+        onPress={() => handleLoanPress(item)}
+        activeOpacity={0.75}
+        accessibilityLabel={`Open actions for ${item.title}`}
+      >
+        <View style={styles.transactionLeft}>
+          <Text style={styles.transactionIcon}>🏦</Text>
+          <View>
+            <Text style={styles.transactionName}>
+              {item.title} • {item.startDate ? item.startDate.split("T")[0] : ""}
+            </Text>
+            <Text style={styles.transactionCategory}>
+              Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
+            </Text>
           </View>
-        )}
+        </View>
+        <View style={styles.transactionRight}>
+          <Text style={styles.LoanexpenseText}>
+            ₱{(item.totalAmount ?? 0).toLocaleString()}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    ))}
+  </>
+)}
+
+{/* LOAN ACTIONS MODAL */}
+<Modal
+  visible={selectedLoan !== null}
+  animationType="fade"
+  transparent
+  onRequestClose={closeLoanActions}
+>
+  <View style={styles.actionModalOverlay}>
+    <View style={styles.actionModalContent}>
+      <Text style={styles.actionModalTitle}>
+        {selectedLoan?.title}
+      </Text>
+      <Text style={styles.actionModalSubtitle}>
+        Total Amount • ₱{(selectedLoan?.totalAmount ?? 0).toLocaleString()}
+      </Text>
+
+      {/* DELETE BUTTON */}
+      <TouchableOpacity
+        style={styles.actionModalDeleteButton}
+        onPress={handleDeleteSelectedLoan}
+      >
+        <Text style={styles.actionModalDeleteText}>
+          Delete loan
+        </Text>
+      </TouchableOpacity>
+
+      {/* CANCEL BUTTON */}
+      <TouchableOpacity
+        style={styles.actionModalCancelButton}
+        onPress={closeLoanActions}
+      >
+        <Text style={styles.actionModalCancelText}>Cancel</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+</Modal>
+
       </ScrollView>
 
       <Modal
@@ -1181,6 +1413,8 @@ useEffect(() => {
   );
 }
 
+
+
 const createStyles = (isDarkMode: boolean) => {
   const backgroundColor = isDarkMode ? "#0f172a" : "#f8fafc";
   const cardColor = isDarkMode ? "#1e293b" : "#ffffff";
@@ -1273,6 +1507,11 @@ const createStyles = (isDarkMode: boolean) => {
     },
     expenseText: {
       color: "#ef4444",
+      fontWeight: "600",
+      fontSize: 15,
+    },
+    LoanexpenseText: {
+      color: "#A4BE0C",
       fontWeight: "600",
       fontSize: 15,
     },
