@@ -538,51 +538,69 @@ export default function ProfileScreen() {
   };
 
   const handleSaveCard = async () => {
-    if (!currentUser) return;
-    const cleanLastFour = cardLastFour.replace(/\D/g, "");
-    if (
-      !cardName.trim() ||
-      cleanLastFour.length !== 4 ||
-      !/^\d{2}\/\d{2}$/.test(cardExpiry)
-    ) {
-      Alert.alert(
-        "Incomplete card details",
-        "Enter a card name, exactly four ending digits, and expiry in MM/YY format.",
-      );
-      return;
-    }
+  if (!currentUser) return;
+  const cleanLastFour = cardLastFour.replace(/\D/g, "");
+  if (
+    !cardName.trim() ||
+    cleanLastFour.length !== 4 ||
+    !/^\d{2}\/\d{2}$/.test(cardExpiry)
+  ) {
+    Alert.alert(
+      "Incomplete card details",
+      "Enter a card name, exactly four ending digits, and expiry in MM/YY format."
+    );
+    return;
+  }
 
-    setIsSavingCard(true);
-    try {
-      const cardData = {
-        name: cardName.trim(),
-        type: cardType,
-        lastFour: cleanLastFour,
-        expiry: cardExpiry,
-      };
-      if (editingCardId) {
-        await updateDoc(
-          doc(db, "users", currentUser.uid, "cards", editingCardId),
-          cardData,
-        );
-      } else {
-        await addDoc(collection(db, "users", currentUser.uid, "cards"), {
+  setIsSavingCard(true);
+  try {
+    const cardData = {
+      name: cardName.trim(),
+      type: cardType,
+      lastFour: cleanLastFour,
+      expiry: cardExpiry,
+    };
+
+    if (editingCardId) {
+      // 1. Update Firestore
+      await updateDoc(
+        doc(db, "users", currentUser.uid, "cards", editingCardId),
+        cardData
+      );
+
+      // 2. Update local state immediately if not using real-time listener
+      setCards((prevCards) =>
+        prevCards.map((card) =>
+          card.id === editingCardId ? { ...card, ...cardData } : card
+        )
+      );
+    } else {
+      // 1. Add to Firestore
+      const docRef = await addDoc(
+        collection(db, "users", currentUser.uid, "cards"),
+        {
           ...cardData,
           createdAt: new Date().toISOString(),
-        });
-      }
-      closeCardModal();
-      Alert.alert(
-        editingCardId ? "Card updated" : "Card added",
-        "Your card summary was saved successfully.",
+        }
       );
-    } catch (error) {
-      console.error("Error saving card:", error);
-      Alert.alert("Error", "Unable to save card details right now.");
-    } finally {
-      setIsSavingCard(false);
+
+      // 2. Append to local state immediately if not using real-time listener
+      const newCard = { id: docRef.id, ...cardData };
+      setCards((prevCards) => [newCard, ...prevCards]);
     }
-  };
+
+    closeCardModal();
+    Alert.alert(
+      editingCardId ? "Card updated" : "Card added",
+      "Your card summary was saved successfully."
+    );
+  } catch (error) {
+    console.error("Error saving card:", error);
+    Alert.alert("Error", "Unable to save card details right now.");
+  } finally {
+    setIsSavingCard(false);
+  }
+};
 
   const openEditCard = (card: SavedCard) => {
     setEditingCardId(card.id);

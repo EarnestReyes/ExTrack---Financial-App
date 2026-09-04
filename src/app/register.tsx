@@ -48,22 +48,74 @@ export default function RegisterScreen() {
   // ==============================
   // DATE PICKER HANDLER
   // ==============================
-  const handleDateChange = (
+    const handleDateChange = (
     event: DateTimePickerEvent,
     selectedDate?: Date,
-  ) => {
+    ) => {
+    // On Android, dismiss picker when an action occurs (set or dismissed)
     if (Platform.OS === "android") {
-      setShowDatePicker(false);
+        setShowDatePicker(false);
     }
-    if (selectedDate) {
-      setBirthday(selectedDate);
+    
+    // Only update date if the user tapped "OK" / selected a date
+    if (event.type === "set" && selectedDate) {
+        setBirthday(selectedDate);
     }
-  };
+    };
 
-  const formatDate = (date: Date | null) => {
+    const formatDate = (date: Date | null) => {
     if (!date) return "";
-    return date.toISOString().split("T")[0]; // Format: YYYY-MM-DD
-  };
+    
+    // Extract local date components to avoid UTC off-by-one timezone shift
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0"); // Months are 0-indexed
+    const day = String(date.getDate()).padStart(2, "0");
+    
+    return `${year}-${month}-${day}`; // Format: YYYY-MM-DD
+    };
+
+    const handleMobileNumberChange = (text: string) => {
+    // 1. Remove all non-numeric characters
+    let digits = text.replace(/\D/g, "");
+
+    // 2. Normalize 63 prefix to leading 0
+    if (digits.startsWith("63")) {
+        digits = "0" + digits.slice(2);
+    }
+
+    // 3. Ensure local format starts with 09
+    if (digits.length > 0 && !digits.startsWith("0")) {
+        digits = "0" + digits;
+    }
+    if (digits.length > 1 && !digits.startsWith("09")) {
+        digits = "09" + digits.slice(2);
+    }
+
+    // 4. Cap strictly at 11 digits (e.g., 09629090803)
+    const truncated = digits.slice(0, 11);
+
+    if (truncated.length === 0) {
+        setMobileNumber("");
+        return;
+    }
+
+    // 5. Extract the 10 digits following leading '0'
+    const body = truncated.slice(1); // e.g. "9629090803"
+    
+    // 6. Format into groups: +63 XXX XXX XXXX
+    let formatted = "+63";
+    if (body.length > 0) {
+        formatted += " " + body.slice(0, 3);
+    }
+    if (body.length > 3) {
+        formatted += " " + body.slice(3, 6);
+    }
+    if (body.length > 6) {
+        formatted += " " + body.slice(6, 10);
+    }
+
+    setMobileNumber(formatted);
+    };
 
   // ==============================
   // LOCATION HANDLER
@@ -272,13 +324,14 @@ export default function RegisterScreen() {
             {/* MOBILE NUMBER */}
             <Text style={styles.inputLabel}>Mobile Number *</Text>
             <TextInput
-              style={styles.input}
-              value={mobileNumber}
-              onChangeText={setMobileNumber}
-              placeholder="e.g. +639123456789"
-              placeholderTextColor={isDarkMode ? "#777777" : "#999999"}
-              keyboardType="phone-pad"
-              editable={!loading}
+                style={styles.input}
+                value={mobileNumber}
+                onChangeText={handleMobileNumberChange}
+                placeholder="+63 962 909 0803"
+                placeholderTextColor={isDarkMode ? "#777777" : "#999999"}
+                keyboardType="phone-pad"
+                maxLength={17} // Fits: "+63 962 909 0803"
+                editable={!loading}
             />
 
             {/* BIRTHDAY */}
@@ -419,8 +472,8 @@ export default function RegisterScreen() {
 // STYLES
 // ==================================================
 const createStyles = (isDarkMode: boolean) => {
-  const backgroundColor = isDarkMode ? "#121212" : "#f5f5f5";
-  const cardColor = isDarkMode ? "#1e1e1e" : "white";
+  const backgroundColor = isDarkMode ? "#0f172a" : "#f5f5f5";
+  const cardColor = isDarkMode ? "#1e293b" : "white";
   const textColor = isDarkMode ? "#ffffff" : "#333333";
   const secondaryTextColor = isDarkMode ? "#aaaaaa" : "gray";
   const borderColor = isDarkMode ? "#333333" : "#dddddd";
