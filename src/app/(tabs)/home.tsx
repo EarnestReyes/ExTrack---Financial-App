@@ -118,15 +118,14 @@ useFocusEffect(
     }
 
     // Fetch profile picture from local DB fallback immediately on screen focus
-  const localPic = getUserProfilePicture();
-  if (localPic) {
-    setProfilePic(localPic);
-  }
+    const localPic = getUserProfilePicture();
+    if (localPic) {
+      setProfilePic(localPic);
+    }
 
-    // 3. Refresh local SQLite data whenever screen gains focus
-    loadTransactions();
+    // Load loans on focus (loadTransactions removed to prevent overwrite of Firestore real-time listener)
     loadLoans();
-  }, [systemColorScheme]),
+  }, [systemColorScheme])
 );
 
 // Real-time listener for Firestore Profile Picture / Transactions / Loans
@@ -143,30 +142,6 @@ const formatProfilePicUri = (rawPic: string | null): string | null => {
   }
   return `data:image/jpeg;base64,${trimmed}`;
 };
-
-// ==========================================
-// Focus Effect for Local Storage Fallback
-// ==========================================
-useFocusEffect(
-  useCallback(() => {
-    const savedTheme = getThemePreference();
-    if (savedTheme !== null) {
-      setIsDarkMode(savedTheme === "dark");
-    } else {
-      setIsDarkMode(systemColorScheme === "dark");
-    }
-
-    // Fetch profile picture from local SQLite DB immediately on screen focus
-    const localPic = getUserProfilePicture();
-    if (localPic) {
-      setProfilePic(formatProfilePicUri(localPic));
-    }
-
-    // Refresh local SQLite data whenever screen gains focus
-    loadTransactions();
-    loadLoans();
-  }, [systemColorScheme])
-);
 
 // ==========================================
 // Real-time Firestore Listeners
@@ -197,36 +172,37 @@ useEffect(() => {
 
   // 2. Real-time Listener for Transactions
   const transactionsRef = collection(db, userPath, "transactions");
-  const unsubscribeTransactions = onSnapshot(
-    transactionsRef,
-    (snapshot) => {
-      const remoteData: TransactionItem[] = snapshot.docs.map((docItem) => {
-        const data = docItem.data();
-        return {
-          id: data.id,
-          firestoreId: docItem.id,
-          name: data.name || "",
-          amount: Number(data.amount) || 0,
-          type: data.type || "",
-          category: data.category || "",
-          date: data.date || "",
-          time: data.time || "",
-          userId: currentUser.uid,
-        };
-      });
+const unsubscribeTransactions = onSnapshot(
+  transactionsRef,
+  (snapshot) => {
+    const remoteData: TransactionItem[] = snapshot.docs.map((docItem) => {
+      const data = docItem.data();
+      return {
+        id: data.id,
+        firestoreId: docItem.id,
+        name: data.name || "",
+        amount: Number(data.amount) || 0,
+        type: data.type || "",
+        category: data.category || "",
+        date: data.date || "",
+        time: data.time || "",
+        userId: currentUser.uid,
+      };
+    });
 
-      remoteData.sort((a, b) => {
-        const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime();
-        const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime();
-        return dateB - dateA;
-      });
+    remoteData.sort((a, b) => {
+      const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime();
+      const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime();
+      return dateB - dateA;
+    });
 
-      setTransactions(remoteData);
-    },
-    (error) => {
-      console.error("Error listening to transactions:", error);
-    }
-  );
+    // Update React state directly with remote data
+    setTransactions(remoteData);
+  },
+  (error) => {
+    console.error("Error listening to transactions:", error);
+  }
+);
 
   // 3. Real-time Listener for Loans
   const loansRef = collection(db, userPath, "loans");
