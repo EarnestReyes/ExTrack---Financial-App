@@ -8,7 +8,12 @@
     "scheme": "extrack",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Allow ExTrack to use Face ID to secure your account.",
+        "NSCameraUsageDescription": "Allow ExTrack to access your camera to update your profile photo.",
+        "NSPhotoLibraryUsageDescription": "Allow ExTrack to access your photo library to select a profile picture."
+      }
     },
     "android": {
       "package": "com.extrack.app",
@@ -25,7 +30,11 @@
         "android.permission.USE_FINGERPRINT",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES"
       ]
     },
     "web": {
@@ -48,6 +57,13 @@
         "expo-local-authentication",
         {
           "faceIDPermission": "Allow ExTrack to use Face ID to secure your account."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow ExTrack to access your photos to select a profile picture.",
+          "cameraPermission": "Allow ExTrack to access your camera to take a profile photo."
         }
       ],
       [

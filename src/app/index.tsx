@@ -9,7 +9,10 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
+
+import { authenticateUser } from "@/services/biometricService";
 
 import { router, useFocusEffect } from 'expo-router';
 import { useState, useMemo, useCallback } from 'react';
@@ -77,6 +80,32 @@ export default function LoginScreen() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleBiometricLogin = async () => {
+    // Check if user is currently logged in via Firebase session or credentials
+    if (auth.currentUser) {
+      setLoading(true);
+      const success = await authenticateUser("Log in to ExTrack using Biometrics");
+      setLoading(false);
+
+      if (success) {
+        router.replace('/(tabs)/home');
+      } else {
+        Alert.alert("Authentication Failed", "Biometric verification failed or was canceled.");
+      }
+    } else {
+      // If no active session, run biometric verification first then require standard login fallback
+      setLoading(true);
+      const success = await authenticateUser("Verify identity for ExTrack");
+      setLoading(false);
+
+      if (success && email.trim() && password) {
+        handleLogin();
+      } else if (success) {
+        Alert.alert("Biometrics Verified", "Please enter your email and password to complete authentication.");
+      }
     }
   };
 
@@ -162,6 +191,15 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
+            {/* BIOMETRIC LOGIN BUTTON */}
+            <TouchableOpacity
+              style={[styles.biometricButton, loading && styles.loginButtonDisabled]}
+              onPress={handleBiometricLogin}
+              disabled={loading}
+            >
+              <Text style={styles.biometricButtonText}>🔐 Use Face ID / Fingerprint</Text>
+            </TouchableOpacity>
+
             {/* REGISTER LINK */}
             <View style={styles.registerContainer}>
               <Text style={styles.registerText}>Don't have an account?</Text>
@@ -216,8 +254,8 @@ const createStyles = (isDarkMode: boolean) => {
       borderWidth: 1,
       borderColor,
     },
-    loginTitle: { fontSize: 24, fontWeight: 'bold', color: textColor, marginBottom: 5 },
-    loginSubtitle: { fontSize: 14, color: secondaryTextColor, marginBottom: 20 },
+    loginTitle: { fontSize: 24, fontWeight: 'bold', color: textColor, marginBottom: 5, textAlign: 'center' },
+    loginSubtitle: { fontSize: 14, color: secondaryTextColor, marginBottom: 20, textAlign: 'center' },
     inputLabel: { fontSize: 15, fontWeight: '600', color: textColor, marginBottom: 8, marginTop: 15 },
     input: {
       backgroundColor: inputBgColor,
@@ -238,6 +276,16 @@ const createStyles = (isDarkMode: boolean) => {
       alignItems: 'center',
       marginTop: 25,
     },
+    biometricButton: {
+      backgroundColor: isDarkMode ? '#334155' : '#e2e8f0',
+      padding: 16,
+      borderRadius: 15,
+      alignItems: 'center',
+      marginTop: 12,
+      borderWidth: 1,
+      borderColor: isDarkMode ? '#475569' : '#cbd5e1',
+    },
+    biometricButtonText: { color: textColor, fontSize: 15, fontWeight: '600' },
     loginButtonDisabled: { opacity: 0.6 },
     loginButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
     registerContainer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 22 },

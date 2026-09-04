@@ -512,47 +512,53 @@ const unsubscribeCards = onSnapshot(
   };
 
   const handleBiometricToggle = async (value: boolean) => {
-    if (!value) {
-      await handleTogglePreference("isBiometricEnabled", false);
+  if (!value) {
+    await handleTogglePreference("isBiometricEnabled", false);
+    return;
+  }
+
+  try {
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    if (!hasHardware) {
+      Alert.alert(
+        "Biometrics Unavailable",
+        "This device does not have a supported biometric sensor."
+      );
       return;
     }
 
-    try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      if (!hasHardware) {
-        Alert.alert(
-          "Biometrics Unavailable",
-          "This device does not have a supported biometric sensor.",
-        );
-        return;
-      }
-
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!isEnrolled) {
-        Alert.alert(
-          "Biometrics Not Set Up",
-          "Set up Face ID or a fingerprint on your device before enabling this option.",
-        );
-        return;
-      }
-
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Confirm biometric security for ExTrack",
-        cancelLabel: "Cancel",
-        fallbackLabel: "Use Passcode",
-      });
-
-      if (result.success) {
-        await handleTogglePreference("isBiometricEnabled", true);
-      }
-    } catch (error) {
-      console.error("Biometric authentication failed:", error);
+    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+    if (!isEnrolled) {
       Alert.alert(
-        "Biometric Error",
-        "Biometric authentication is unavailable right now.",
+        "Biometrics Not Set Up",
+        "Set up Face ID or a fingerprint on your device before enabling this option."
       );
+      return;
     }
-  };
+
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: "Confirm biometric security for ExTrack",
+      cancelLabel: "Cancel",
+      fallbackLabel: "Use Passcode",
+      disableDeviceFallback: false,
+    });
+
+    if (result.success) {
+      await handleTogglePreference("isBiometricEnabled", true);
+      Alert.alert("Success", "Biometric authentication enabled!");
+    } else {
+      // Revert switch if authentication was canceled or failed
+      await handleTogglePreference("isBiometricEnabled", false);
+    }
+  } catch (error) {
+    console.error("Biometric authentication failed:", error);
+    Alert.alert(
+      "Biometric Error",
+      "Biometric authentication is unavailable right now."
+    );
+    await handleTogglePreference("isBiometricEnabled", false);
+  }
+};
 
   const handleSaveLoan = async () => {
   if (!currentUser) return;
