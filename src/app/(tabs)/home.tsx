@@ -52,7 +52,11 @@ interface GraphDataItem {
 
 const { width, height } = Dimensions.get("window");
 
+ const overviewPeriods = ["Day", "Week", "Month", "Year"] as const;
+  type OverviewPeriod = (typeof overviewPeriods)[number];
+
 export default function HomeScreen() {
+
   const [showTransactionsModal, setShowTransactionsModal] = useState(false);
   const [showLoansModal, setShowLoansModal] = useState(false);
   const INITIAL_COUNT = 3;
@@ -76,13 +80,13 @@ export default function HomeScreen() {
   const [type, setType] = useState<"Income" | "Expense">("Expense");
   const [category, setCategory] = useState("");
 
-  // View States
+// View States
   const [filter, setFilter] = useState("All");
   const [overviewPeriod, setOverviewPeriod] = useState<
     "Day" | "Week" | "Month" | "Year"
-  >("Month");
+  >("Day");
   const [balancePeriod, setBalancePeriod] =
-    useState<typeof overviewPeriod>("Month");
+    useState<typeof overviewPeriod>("Day");
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
   // 1. Updated state type to LoanItem[] and standard camelCase naming
   const [loans, setLoanList] = useState<LoanItem[]>([]);
@@ -92,13 +96,9 @@ export default function HomeScreen() {
 
   const [selectedTransaction, setSelectedTransaction] =
     useState<TransactionItem | null>(null);
+  
 
-  const overviewPeriods: Array<typeof overviewPeriod> = [
-    "Day",
-    "Week",
-    "Month",
-    "Year",
-  ];
+ 
 
   useEffect(() => {
     initDatabase();
@@ -675,7 +675,7 @@ export default function HomeScreen() {
       for (const loanDoc of loansSnapshot.docs) {
         const loan = loanDoc.data();
 
-        const monthlyPayment = Number(loan.monthlyPayment);
+        const monthlyPayment = Number(loan.totalAmount);
         const durationMonths = Number(loan.durationMonths);
 
         if (
@@ -879,29 +879,30 @@ export default function HomeScreen() {
         </View>
 
         {/* BALANCE CARD */}
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>Available Balance</Text>
-          <Text style={styles.balance}>
-            ₱
-            {availableBalance.toLocaleString("en-PH", {
-              minimumFractionDigits: 2,
-            })}
-          </Text>
-          <View style={styles.statsRow}>
-            <View>
-              <Text style={styles.statsLabel}>Incoming</Text>
-              <Text style={styles.incomeText}>
-                +₱{totalIncome.toLocaleString()}
-              </Text>
-            </View>
-            <View>
-              <Text style={styles.statsLabel}>Outgoing</Text>
-              <Text style={styles.expenseText}>
-                -₱{totalExpenses.toLocaleString()}
-              </Text>
+          <View style={styles.balanceCard}>
+            <Text style={styles.balanceLabel}>Available Balance</Text>
+            <Text style={[styles.balance, availableBalance < 0 && { color: "#ef4444" }]}>
+              ₱
+              {availableBalance.toLocaleString("en-PH", {
+                minimumFractionDigits: 2,
+              })}
+            </Text>
+
+            <View style={styles.statsRow}>
+              <View>
+                <Text style={styles.statsLabel}>Incoming</Text>
+                <Text style={styles.incomeText}>
+                  +₱{totalIncome.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                </Text>
+              </View>
+              <View>
+                <Text style={styles.statsLabel}>Outgoing</Text>
+                <Text style={styles.expenseText}>
+                  -₱{totalExpenses.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
 
         {/* LINE CHART SECTION */}
         <View style={styles.sectionHeader}>
@@ -988,91 +989,95 @@ export default function HomeScreen() {
         </View>
 
         <Text style={styles.spendingOverviewDescription}>
-          Description: {spendingOverviewDescription}
-        </Text>
+        Description: {spendingOverviewDescription}
+      </Text>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Balance Overview</Text>
-        </View>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Balance Overview</Text>
+      </View>
 
-        <View style={styles.overviewFilterContainer}>
-          {overviewPeriods.map((period) => (
+      {/* OVERVIEW PERIOD FILTERS */}
+      <View style={styles.overviewFilterContainer}>
+        {overviewPeriods.map((period) => {
+          const isActive = balancePeriod === period;
+
+          return (
             <TouchableOpacity
               key={`balance-${period}`}
               style={[
                 styles.overviewFilter,
-                balancePeriod === period && styles.overviewFilterActive,
+                isActive && styles.overviewFilterActive,
               ]}
               onPress={() => setBalancePeriod(period)}
+              activeOpacity={0.7}
             >
               <Text
                 style={[
                   styles.filterText,
-                  balancePeriod === period && styles.filterTextActive,
+                  isActive && styles.filterTextActive,
                 ]}
               >
                 {period}
               </Text>
             </TouchableOpacity>
-          ))}
-        </View>
+          );
+        })}
+      </View>
 
-        <Text style={[styles.balanceTrendLabel, { color: balanceTrendColor }]}>
-          {balanceTrendLabel}
-        </Text>
+      <Text style={[styles.balanceTrendLabel, { color: balanceTrendColor }]}>
+        {balanceTrendLabel}
+      </Text>
 
-        <View style={styles.chartCard}>
-          {balanceDisplayValues.length > 0 ? (
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator
-              style={styles.balanceChartScroll}
-              contentContainerStyle={styles.balanceChartContent}
-            >
-              <LineChart
-                key={`balance-chart-${balancePeriod}-${balanceDisplayValues.join(",")}`}
-                data={{
-                  labels: balanceDisplayLabels.map((label) =>
-                    label === "Start"
-                      ? label
-                      : formatChartLabel(label, balancePeriod),
-                  ),
-                  datasets: [
-                    {
-                      data: balanceDisplayValues,
-                      color: () => balanceTrendColor,
-                    },
-                  ],
-                }}
-                width={balanceChartWidth}
-                height={180}
-                fromZero={false}
-                getDotColor={(value) => (value >= 0 ? "#22c55e" : "#ef4444")}
-                chartConfig={{
-                  backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
-                  backgroundGradientFrom: isDarkMode ? "#1e293b" : "#ffffff",
-                  backgroundGradientTo: isDarkMode ? "#1e293b" : "#ffffff",
-                  decimalPlaces: 0,
-                  color: (opacity = 1) =>
-                    `${balanceTrendColor}${opacity === 1 ? "" : ""}`,
-                  labelColor: (opacity = 1) =>
-                    isDarkMode
-                      ? `rgba(148, 163, 184, ${opacity})`
-                      : `rgba(100, 116, 139, ${opacity})`,
-                  propsForDots: { r: "4", strokeWidth: "2" },
-                  style: { borderRadius: 16 },
-                }}
-                bezier
-                style={{ marginVertical: 8, borderRadius: 16 }}
-              />
-            </ScrollView>
-          ) : (
-            <Text style={styles.emptyText}>
-              Add transactions to track balance
-            </Text>
-          )}
-        </View>
+      {/* CHART CONTAINER */}
+      <View style={styles.chartCard}>
+        {balanceDisplayValues.length > 0 ? (
+          <ScrollView
+            horizontal
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator
+            style={styles.balanceChartScroll}
+            contentContainerStyle={styles.balanceChartContent}
+          >
+            <LineChart
+              key={`balance-chart-${balancePeriod}-${balanceDisplayValues.join(",")}`}
+              data={{
+                labels: balanceDisplayLabels.map((label) =>
+                  label === "Start" ? label : formatChartLabel(label, balancePeriod)
+                ),
+                datasets: [
+                  {
+                    data: balanceDisplayValues,
+                    color: () => balanceTrendColor,
+                  },
+                ],
+              }}
+              width={balanceChartWidth}
+              height={180}
+              fromZero={false}
+              getDotColor={(value) => (value >= 0 ? "#22c55e" : "#ef4444")}
+              chartConfig={{
+                backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
+                backgroundGradientFrom: isDarkMode ? "#1e293b" : "#ffffff",
+                backgroundGradientTo: isDarkMode ? "#1e293b" : "#ffffff",
+                decimalPlaces: 0,
+                color: () => balanceTrendColor,
+                labelColor: (opacity = 1) =>
+                  isDarkMode
+                    ? `rgba(148, 163, 184, ${opacity})`
+                    : `rgba(100, 116, 139, ${opacity})`,
+                propsForDots: { r: "4", strokeWidth: "2" },
+                style: { borderRadius: 16 },
+              }}
+              bezier
+              style={{ marginVertical: 8, borderRadius: 16 }}
+            />
+          </ScrollView>
+        ) : (
+          <Text style={styles.emptyText}>
+            Add transactions to track balance
+          </Text>
+        )}
+      </View>
 
         {/* RECENT TRANSACTIONS CONTAINER */}
         <View style={styles.cardContainer}>
@@ -1081,28 +1086,34 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>Recent Transactions</Text>
           </View>
 
-          {/* FILTERS */}
-          <View style={styles.filterContainer}>
-            {["All", "Income", "Expense"].map((f) => (
+        
+        {/* FILTERS */}
+        <View style={styles.overviewFilterContainer}>
+          {["All", "Income", "Expense"].map((f) => {
+            const isActive = filter === f;
+
+            return (
               <TouchableOpacity
                 key={f}
                 style={[
-                  styles.filterChip,
-                  filter === f && styles.filterChipActive,
+                  styles.overviewFilter,
+                  isActive && styles.overviewFilterActive,
                 ]}
                 onPress={() => setFilter(f)}
+                activeOpacity={0.7}
               >
                 <Text
                   style={[
                     styles.filterText,
-                    filter === f && styles.filterTextActive,
+                    isActive && styles.filterTextActive,
                   ]}
                 >
                   {f}
                 </Text>
               </TouchableOpacity>
-            ))}
-          </View>
+            );
+          })}
+        </View>
 
           {/* LIST TRANSACTIONS */}
           {filteredTransactions.length > 0 ? (

@@ -43,7 +43,7 @@ export interface LoanItem {
 
 export interface SavedCard {
   id: string;
-  firestoreId?: string; // Add this line
+  firestoreId?: string;
   name: string;
   type: string;
   lastFour: string;
@@ -51,7 +51,6 @@ export interface SavedCard {
 }
 
 // Single Initialization Function
-// 1. Update initDatabase to include the cards table:
 export const initDatabase = () => {
   db.execSync(`
     CREATE TABLE IF NOT EXISTS user_profile (
@@ -122,7 +121,9 @@ export const fetchTransactionsFromDB = (): TransactionItem[] => {
   );
 };
 
-export const insertTransactionToDB = (transaction: TransactionItem): number => {
+export const insertTransactionToDB = async (
+  transaction: TransactionItem
+): Promise<{ id: number; firestoreId?: string }> => {
   initDatabase();
 
   const result = db.runSync(
@@ -139,54 +140,62 @@ export const insertTransactionToDB = (transaction: TransactionItem): number => {
 
   const insertedId = result.lastInsertRowId;
   const currentUser = auth.currentUser;
+  let firestoreId: string | undefined;
 
   if (currentUser) {
-    const userTransactionsRef = collection(
-      firestoreDb,
-      "users",
-      currentUser.uid,
-      "transactions"
-    );
+    try {
+      const userTransactionsRef = collection(
+        firestoreDb,
+        "users",
+        currentUser.uid,
+        "transactions"
+      );
 
-    const docRef = doc(userTransactionsRef);
+      const docRef = doc(userTransactionsRef);
+      firestoreId = docRef.id;
 
-    setDoc(docRef, {
-      id: insertedId,
-      name: transaction.name,
-      amount: transaction.amount,
-      type: transaction.type,
-      category: transaction.category,
-      date: transaction.date,
-      time: transaction.time,
-      loanId: transaction.loanId || null,
-      createdAt: new Date().toISOString(),
-    }).catch((error) =>
-      console.error("Error writing transaction to Firestore:", error)
-    );
+      await setDoc(docRef, {
+        id: insertedId,
+        name: transaction.name,
+        amount: transaction.amount,
+        type: transaction.type,
+        category: transaction.category,
+        date: transaction.date,
+        time: transaction.time,
+        loanId: transaction.loanId || null,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Error writing transaction to Firestore:", error);
+    }
   }
 
-  return insertedId;
+  return { id: insertedId, firestoreId };
 };
 
-export const updateTransactionInDB = async (transaction: TransactionItem): Promise<void> => {
-  if (!transaction.id) return;
+export const updateTransactionInDB = async (
+  transaction: TransactionItem
+): Promise<void> => {
+  if (!transaction.id && !transaction.firestoreId) return;
   initDatabase();
 
-  const numericId = Number(transaction.id);
+  const numericId = transaction.id ? Number(transaction.id) : null;
 
   // 1. Update in local SQLite
-  db.runSync(
-    "UPDATE transactions SET name = ?, amount = ?, type = ?, category = ?, date = ?, time = ? WHERE id = ?",
-    [
-      transaction.name,
-      transaction.amount,
-      transaction.type,
-      transaction.category,
-      transaction.date,
-      transaction.time,
-      numericId,
-    ]
-  );
+  if (numericId) {
+    db.runSync(
+      "UPDATE transactions SET name = ?, amount = ?, type = ?, category = ?, date = ?, time = ? WHERE id = ?",
+      [
+        transaction.name,
+        transaction.amount,
+        transaction.type,
+        transaction.category,
+        transaction.date,
+        transaction.time,
+        numericId,
+      ]
+    );
+  }
 
   // 2. Update in Firebase Firestore
   const currentUser = auth.currentUser;
@@ -216,13 +225,14 @@ export const updateTransactionInDB = async (transaction: TransactionItem): Promi
         },
         { merge: true }
       );
-    } else {
+    } else if (numericId) {
       const q = query(transactionsRef, where("id", "==", numericId));
       const snapshot = await getDocs(q);
 
       if (!snapshot.empty) {
-        for (const document of snapshot.docs) {
-          await setDoc(
+        const batch = writeBatch(firestoreDb);
+        snapshot.forEach((document) => {
+          batch.set(
             document.ref,
             {
               name: transaction.name,
@@ -236,24 +246,8 @@ export const updateTransactionInDB = async (transaction: TransactionItem): Promi
             },
             { merge: true }
           );
-        }
-      } else {
-        const docRef = doc(transactionsRef);
-        await setDoc(
-          docRef,
-          {
-            id: numericId,
-            name: transaction.name,
-            amount: transaction.amount,
-            type: transaction.type,
-            category: transaction.category,
-            date: transaction.date,
-            time: transaction.time,
-            loanId: transaction.loanId || null,
-            createdAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
+        });
+        await batch.commit();
       }
     }
   } catch (error) {
@@ -262,20 +256,18 @@ export const updateTransactionInDB = async (transaction: TransactionItem): Promi
 };
 
 export const deleteTransactionFromDB = async (
-  id: number | string,
+  id?: number | string,
   firestoreId?: string,
   loanId?: string | null
 ): Promise<void> => {
   initDatabase();
 
-  const numericId = Number(id);
+  const numericId = id ? Number(id) : undefined;
 
-  if (!isNaN(numericId) && numericId > 0) {
-    // 1. Delete from local SQLite database
+  if (numericId && !isNaN(numericId) && numericId > 0) {
     db.runSync("DELETE FROM transactions WHERE id = ?", [numericId]);
   }
 
-  // 2. Handle Firestore Deletion
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
@@ -288,7 +280,7 @@ export const deleteTransactionFromDB = async (
       return;
     }
 
-    if (!isNaN(numericId) && numericId > 0) {
+    if (numericId && !isNaN(numericId) && numericId > 0) {
       const transactionsRef = collection(firestoreDb, userPath, "transactions");
       const q = query(transactionsRef, where("id", "==", numericId));
       const snapshot = await getDocs(q);
@@ -310,12 +302,12 @@ export const deleteTransactionFromDB = async (
 // ==========================================
 export const fetchLoansFromDB = (): LoanItem[] => {
   initDatabase();
-  return db.getAllSync<LoanItem>(
-    "SELECT * FROM loans ORDER BY id DESC"
-  );
+  return db.getAllSync<LoanItem>("SELECT * FROM loans ORDER BY id DESC");
 };
 
-export const insertLoanToDB = (loan: LoanItem): number => {
+export const insertLoanToDB = async (
+  loan: LoanItem
+): Promise<{ id: number; firestoreId?: string }> => {
   initDatabase();
 
   const createdAt = loan.createdAt || new Date().toISOString();
@@ -336,33 +328,37 @@ export const insertLoanToDB = (loan: LoanItem): number => {
 
   const insertedId = result.lastInsertRowId;
   const currentUser = auth.currentUser;
+  let firestoreId: string | undefined;
 
   if (currentUser) {
-    const userLoansRef = collection(
-      firestoreDb,
-      "users",
-      currentUser.uid,
-      "loans"
-    );
+    try {
+      const userLoansRef = collection(
+        firestoreDb,
+        "users",
+        currentUser.uid,
+        "loans"
+      );
 
-    const docRef = doc(userLoansRef);
+      const docRef = doc(userLoansRef);
+      firestoreId = docRef.id;
 
-    setDoc(docRef, {
-      id: insertedId,
-      title: loan.title,
-      totalAmount: loan.totalAmount,
-      monthlyPayment: loan.monthlyPayment,
-      annualExpense: loan.annualExpense,
-      durationMonths: loan.durationMonths,
-      startDate: loan.startDate,
-      endDate: loan.endDate,
-      createdAt: createdAt,
-    }).catch((error) =>
-      console.error("Error writing loan to Firestore:", error)
-    );
+      await setDoc(docRef, {
+        id: insertedId,
+        title: loan.title,
+        totalAmount: loan.totalAmount,
+        monthlyPayment: loan.monthlyPayment,
+        annualExpense: loan.annualExpense,
+        durationMonths: loan.durationMonths,
+        startDate: loan.startDate,
+        endDate: loan.endDate,
+        createdAt: createdAt,
+      });
+    } catch (error) {
+      console.error("Error writing loan to Firestore:", error);
+    }
   }
 
-  return insertedId;
+  return { id: insertedId, firestoreId };
 };
 
 export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
@@ -371,7 +367,6 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
 
   const numericId = loan.id ? Number(loan.id) : null;
 
-  // 1. Update in local SQLite if numeric ID exists
   if (numericId) {
     db.runSync(
       "UPDATE loans SET title = ?, totalAmount = ?, monthlyPayment = ?, annualExpense = ?, durationMonths = ?, startDate = ?, endDate = ? WHERE id = ?",
@@ -388,7 +383,6 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
     );
   }
 
-  // 2. Update in Firebase Firestore
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
@@ -421,8 +415,9 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
       const snapshot = await getDocs(q);
 
       if (!snapshot.empty) {
-        for (const document of snapshot.docs) {
-          await setDoc(
+        const batch = writeBatch(firestoreDb);
+        snapshot.forEach((document) => {
+          batch.set(
             document.ref,
             {
               title: loan.title,
@@ -436,7 +431,8 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
             },
             { merge: true }
           );
-        }
+        });
+        await batch.commit();
       }
     }
   } catch (error) {
@@ -453,12 +449,10 @@ export const deleteLoanFromDB = async (
   const numericId = id ? Number(id) : undefined;
 
   try {
-    // 1. Delete from local SQLite database if valid numeric id exists
     if (numericId && !isNaN(numericId) && numericId > 0) {
       db.runSync("DELETE FROM loans WHERE id = ?", [numericId]);
     }
 
-    // 2. Delete from Firestore if firestoreId exists
     const currentUser = auth.currentUser;
     if (currentUser) {
       const userPath = `users/${currentUser.uid}`;
@@ -511,11 +505,12 @@ export const deleteMasterLoanFromDB = async (loanId: string): Promise<void> => {
 // ==========================================
 // Profile Picture Functions
 // ==========================================
-export const setUserProfilePicture = async (profilePicUri: string): Promise<boolean> => {
+export const setUserProfilePicture = async (
+  profilePicUri: string
+): Promise<boolean> => {
   try {
     initDatabase();
 
-    // 1. Save to local SQLite
     db.runSync(
       `INSERT INTO user_profile (id, profilePic)
        VALUES (1, ?)
@@ -523,7 +518,6 @@ export const setUserProfilePicture = async (profilePicUri: string): Promise<bool
       [profilePicUri]
     );
 
-    // 2. Sync to Firebase Firestore if logged in
     const currentUser = auth.currentUser;
     if (currentUser) {
       const userRef = doc(firestoreDb, "users", currentUser.uid);
@@ -555,7 +549,6 @@ export const getUserProfilePicture = (): string | null => {
     const rawPic = result?.profilePic?.trim();
     if (!rawPic) return null;
 
-    // Return valid web URLs, local file paths, or already formatted Base64 URIs as-is
     if (
       rawPic.startsWith("http://") ||
       rawPic.startsWith("https://") ||
@@ -565,7 +558,6 @@ export const getUserProfilePicture = (): string | null => {
       return rawPic;
     }
 
-    // Prepend missing Base64 data header for raw strings
     return `data:image/jpeg;base64,${rawPic}`;
   } catch (error) {
     console.error("Error fetching profile picture from DB:", error);
@@ -579,13 +571,12 @@ export const getUserProfilePicture = (): string | null => {
 export const clearAllDataAndDatabase = async () => {
   initDatabase();
 
-  // 1. Clear local SQLite tables
   db.execSync("DELETE FROM transactions;");
   db.execSync("DELETE FROM loans;");
   db.execSync("DELETE FROM user_profile;");
   db.execSync("DELETE FROM settings;");
+  db.execSync("DELETE FROM cards;");
 
-  // 2. Clear remote Firestore subcollections for active user
   const currentUser = auth.currentUser;
   if (currentUser) {
     try {
@@ -608,18 +599,14 @@ export const clearAllDataAndDatabase = async () => {
   }
 };
 
-
-// 2. Add the clear function at the bottom:
 // ==========================================
 // Card CRUD Functions
 // ==========================================
 export const clearCardsFromDB = async (): Promise<void> => {
   initDatabase();
 
-  // Clear local SQLite
   db.runSync("DELETE FROM cards;");
 
-  // Clear Firestore cards subcollection if user is logged in
   const currentUser = auth.currentUser;
   if (currentUser) {
     try {
