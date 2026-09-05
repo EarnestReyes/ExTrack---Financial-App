@@ -5,6 +5,9 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { clearAllDataAndDatabase, clearCardsFromDB } from "../../database";
+import { getDocs, QueryDocumentSnapshot } from "firebase/firestore";
+import { db as firestoreDb } from "../../config/firebase";
+
 
 import {
   addDoc,
@@ -732,44 +735,119 @@ const deleteSelectedCard = async () => {
   }
 };
 
-  const openAnalytics = () => {
-    setTransactions(fetchTransactionsFromDB());
-    setAnalyticsVisible(true);
+  const openAnalytics = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch local SQLite transactions
+      const localTransactions = fetchTransactionsFromDB();
+
+      // 2. Fetch remote Firestore transactions (includes automatic loan deductions)
+      const currentUser = auth.currentUser;
+      let combinedTransactions = [...localTransactions];
+
+      if (currentUser) {
+        const userPath = `users/${currentUser.uid}`;
+        const transactionsRef = collection(firestoreDb, userPath, "transactions");
+        const snapshot = await getDocs(transactionsRef);
+
+        const remoteTransactions: TransactionItem[] = snapshot.docs.map(
+            (docSnap: QueryDocumentSnapshot) => {
+              const data = docSnap.data();
+              return {
+                firestoreId: docSnap.id,
+                id: data.id,
+                name: data.name,
+                amount: Number(data.amount) || 0,
+                type: data.type,
+                category: data.category,
+                date: data.date,
+                time: data.time,
+                loanId: data.loanId || null,
+              };
+            }
+          );
+        // Deduplicate records present in both local SQLite and remote Firestore
+        const localIds = new Set(localTransactions.map((t) => t.id));
+        const newRemoteItems = remoteTransactions.filter(
+          (rt) => !rt.id || !localIds.has(rt.id)
+        );
+
+        combinedTransactions = [...localTransactions, ...newRemoteItems];
+      }
+
+      setTransactions(combinedTransactions);
+    } catch (error) {
+      console.error("Error fetching transactions for analytics:", error);
+    } finally {
+      setLoading(false);
+      setAnalyticsVisible(true);
+    }
   };
 
   const analyticsToday = new Date();
-  analyticsToday.setHours(0, 0, 0, 0);
-  const analyticsStart = new Date(analyticsToday);
-  if (analyticsPeriod === "Week")
+  analyticsToday.setHours(23, 59, 59, 999);
+
+  const analyticsStart = new Date();
+  analyticsStart.setHours(0, 0, 0, 0);
+
+  if (analyticsPeriod === "Week") {
     analyticsStart.setDate(analyticsToday.getDate() - 6);
-  if (analyticsPeriod === "Month") analyticsStart.setDate(1);
-  if (analyticsPeriod === "Year") analyticsStart.setMonth(0, 1);
+  } else if (analyticsPeriod === "Month") {
+    analyticsStart.setDate(1);
+  } else if (analyticsPeriod === "Year") {
+    analyticsStart.setMonth(0, 1);
+  }
+
+  // Safe check for expense and automatic loan deduction types
+  const isExpenseType = (type?: string) => {
+    if (!type) return false;
+    const normalized = type.toLowerCase();
+    return (
+      normalized === "expense" ||
+      normalized === "loan" ||
+      normalized === "loan payment" ||
+      normalized === "loan deduction" ||
+      normalized === "deduction"
+    );
+  };
 
   const analyticsTransactions = transactions.filter((transaction) => {
-    const [year, month, day] = transaction.date.split("-").map(Number);
-    const transactionDate = new Date(year, month - 1, day);
+    if (!transaction.date) return false;
+
+    // Handle standard YYYY-MM-DD as well as ISO date strings
+    const dateParts = transaction.date.split("T")[0].split("-").map(Number);
+    if (dateParts.length !== 3) return false;
+
+    const [year, month, day] = dateParts;
+    const transactionDate = new Date(year, month - 1, day, 0, 0, 0, 0);
+
     return (
       transactionDate >= analyticsStart && transactionDate <= analyticsToday
     );
   });
+
   const analyticsIncome = analyticsTransactions
-    .filter((transaction) => transaction.type === "Income")
+    .filter((transaction) => transaction.type?.toLowerCase() === "income")
     .reduce((total, transaction) => total + transaction.amount, 0);
+
   const analyticsExpenses = analyticsTransactions
-    .filter((transaction) => transaction.type === "Expense")
+    .filter((transaction) => isExpenseType(transaction.type))
     .reduce((total, transaction) => total + transaction.amount, 0);
+
   const analyticsCategories = analyticsTransactions.reduce<
     Record<string, number>
   >((totals, transaction) => {
-    if (transaction.type === "Expense") {
-      totals[transaction.category] =
-        (totals[transaction.category] || 0) + transaction.amount;
+    if (isExpenseType(transaction.type)) {
+      const category = transaction.category || "Uncategorized";
+      totals[category] = (totals[category] || 0) + transaction.amount;
     }
     return totals;
   }, {});
+
   const topCategories = Object.entries(analyticsCategories)
     .sort(([, firstAmount], [, secondAmount]) => secondAmount - firstAmount)
     .slice(0, 5);
+
   const highestCategoryAmount = topCategories[0]?.[1] || 1;
 
   const getInitials = (name: string) => {
