@@ -889,7 +889,12 @@ const handleDeleteSelectedLoan = async () => {
         {/* BALANCE CARD */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Available Balance</Text>
-          <Text style={styles.balance}>
+          <Text
+            style={[
+              styles.balance,
+              availableBalance < 0 && { color: "#ef4444" },
+            ]}
+          >
             ₱
             {availableBalance.toLocaleString("en-PH", {
               minimumFractionDigits: 2,

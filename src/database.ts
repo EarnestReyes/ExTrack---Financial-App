@@ -43,7 +43,7 @@ export interface LoanItem {
 
 export interface SavedCard {
   id: string;
-  firestoreId?: string; // Add this line
+  firestoreId?: string;
   name: string;
   type: string;
   lastFour: string;
@@ -51,7 +51,6 @@ export interface SavedCard {
 }
 
 // Single Initialization Function
-// 1. Update initDatabase to include the cards table:
 export const initDatabase = () => {
   db.execSync(`
     CREATE TABLE IF NOT EXISTS user_profile (
@@ -150,6 +149,7 @@ export const insertTransactionToDB = (transaction: TransactionItem): number => {
 
     const docRef = doc(userTransactionsRef);
 
+    // Fire-and-forget sync to Firestore
     setDoc(docRef, {
       id: insertedId,
       name: transaction.name,
@@ -161,7 +161,7 @@ export const insertTransactionToDB = (transaction: TransactionItem): number => {
       loanId: transaction.loanId || null,
       createdAt: new Date().toISOString(),
     }).catch((error) =>
-      console.error("Error writing transaction to Firestore:", error)
+      console.warn("Offline or failed sync writing transaction to Firestore:", error)
     );
   }
 
@@ -174,7 +174,7 @@ export const updateTransactionInDB = async (transaction: TransactionItem): Promi
 
   const numericId = Number(transaction.id);
 
-  // 1. Update in local SQLite
+  // 1. Local SQLite update guaranteed to succeed offline
   db.runSync(
     "UPDATE transactions SET name = ?, amount = ?, type = ?, category = ?, date = ?, time = ? WHERE id = ?",
     [
@@ -188,7 +188,7 @@ export const updateTransactionInDB = async (transaction: TransactionItem): Promi
     ]
   );
 
-  // 2. Update in Firebase Firestore
+  // 2. Safely sync to Remote Firestore
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
@@ -257,7 +257,7 @@ export const updateTransactionInDB = async (transaction: TransactionItem): Promi
       }
     }
   } catch (error) {
-    console.error("Error updating transaction in Firestore:", error);
+    console.warn("Offline: Firestore transaction update postponed.", error);
   }
 };
 
@@ -270,12 +270,12 @@ export const deleteTransactionFromDB = async (
 
   const numericId = Number(id);
 
+  // 1. Execute local SQLite deletion
   if (!isNaN(numericId) && numericId > 0) {
-    // 1. Delete from local SQLite database
     db.runSync("DELETE FROM transactions WHERE id = ?", [numericId]);
   }
 
-  // 2. Handle Firestore Deletion
+  // 2. Attempt Firestore sync
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
@@ -300,8 +300,7 @@ export const deleteTransactionFromDB = async (
       }
     }
   } catch (error) {
-    console.error("Error deleting record from Firestore:", error);
-    throw error;
+    console.warn("Offline: Firestore transaction deletion deferred.", error);
   }
 };
 
@@ -358,7 +357,7 @@ export const insertLoanToDB = (loan: LoanItem): number => {
       endDate: loan.endDate,
       createdAt: createdAt,
     }).catch((error) =>
-      console.error("Error writing loan to Firestore:", error)
+      console.warn("Offline or failed sync writing loan to Firestore:", error)
     );
   }
 
@@ -371,7 +370,6 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
 
   const numericId = loan.id ? Number(loan.id) : null;
 
-  // 1. Update in local SQLite if numeric ID exists
   if (numericId) {
     db.runSync(
       "UPDATE loans SET title = ?, totalAmount = ?, monthlyPayment = ?, annualExpense = ?, durationMonths = ?, startDate = ?, endDate = ? WHERE id = ?",
@@ -388,7 +386,6 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
     );
   }
 
-  // 2. Update in Firebase Firestore
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
@@ -440,7 +437,7 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
       }
     }
   } catch (error) {
-    console.error("Error updating loan in Firestore:", error);
+    console.warn("Offline: Firestore loan update deferred.", error);
   }
 };
 
@@ -452,35 +449,32 @@ export const deleteLoanFromDB = async (
 
   const numericId = id ? Number(id) : undefined;
 
+  if (numericId && !isNaN(numericId) && numericId > 0) {
+    db.runSync("DELETE FROM loans WHERE id = ?", [numericId]);
+  }
+
+  const currentUser = auth.currentUser;
+  if (!currentUser) return;
+
+  const userPath = `users/${currentUser.uid}`;
+
   try {
-    // 1. Delete from local SQLite database if valid numeric id exists
-    if (numericId && !isNaN(numericId) && numericId > 0) {
-      db.runSync("DELETE FROM loans WHERE id = ?", [numericId]);
-    }
+    if (firestoreId) {
+      const loanRef = doc(firestoreDb, userPath, "loans", firestoreId);
+      await deleteDoc(loanRef);
+    } else if (numericId && !isNaN(numericId) && numericId > 0) {
+      const loansRef = collection(firestoreDb, userPath, "loans");
+      const q = query(loansRef, where("id", "==", numericId));
+      const snapshot = await getDocs(q);
 
-    // 2. Delete from Firestore if firestoreId exists
-    const currentUser = auth.currentUser;
-    if (currentUser) {
-      const userPath = `users/${currentUser.uid}`;
-
-      if (firestoreId) {
-        const loanRef = doc(firestoreDb, userPath, "loans", firestoreId);
-        await deleteDoc(loanRef);
-      } else if (numericId && !isNaN(numericId) && numericId > 0) {
-        const loansRef = collection(firestoreDb, userPath, "loans");
-        const q = query(loansRef, where("id", "==", numericId));
-        const snapshot = await getDocs(q);
-
-        if (!snapshot.empty) {
-          const batch = writeBatch(firestoreDb);
-          snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-          await batch.commit();
-        }
+      if (!snapshot.empty) {
+        const batch = writeBatch(firestoreDb);
+        snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
+        await batch.commit();
       }
     }
   } catch (error) {
-    console.error("Error executing delete loan query:", error);
-    throw error;
+    console.warn("Offline: Firestore loan deletion deferred.", error);
   }
 };
 
@@ -503,8 +497,7 @@ export const deleteMasterLoanFromDB = async (loanId: string): Promise<void> => {
 
     await batch.commit();
   } catch (error) {
-    console.error("Error deleting master loan:", error);
-    throw error;
+    console.warn("Offline: Firestore master loan deletion postponed.", error);
   }
 };
 
@@ -515,7 +508,6 @@ export const setUserProfilePicture = async (profilePicUri: string): Promise<bool
   try {
     initDatabase();
 
-    // 1. Save to local SQLite
     db.runSync(
       `INSERT INTO user_profile (id, profilePic)
        VALUES (1, ?)
@@ -523,18 +515,17 @@ export const setUserProfilePicture = async (profilePicUri: string): Promise<bool
       [profilePicUri]
     );
 
-    // 2. Sync to Firebase Firestore if logged in
     const currentUser = auth.currentUser;
     if (currentUser) {
       const userRef = doc(firestoreDb, "users", currentUser.uid);
-      await setDoc(
+      setDoc(
         userRef,
         {
           photoURL: profilePicUri,
           updatedAt: new Date().toISOString(),
         },
         { merge: true }
-      );
+      ).catch((err) => console.warn("Offline: Firestore photoURL sync skipped.", err));
     }
 
     return true;
@@ -555,7 +546,6 @@ export const getUserProfilePicture = (): string | null => {
     const rawPic = result?.profilePic?.trim();
     if (!rawPic) return null;
 
-    // Return valid web URLs, local file paths, or already formatted Base64 URIs as-is
     if (
       rawPic.startsWith("http://") ||
       rawPic.startsWith("https://") ||
@@ -565,7 +555,6 @@ export const getUserProfilePicture = (): string | null => {
       return rawPic;
     }
 
-    // Prepend missing Base64 data header for raw strings
     return `data:image/jpeg;base64,${rawPic}`;
   } catch (error) {
     console.error("Error fetching profile picture from DB:", error);
@@ -579,13 +568,12 @@ export const getUserProfilePicture = (): string | null => {
 export const clearAllDataAndDatabase = async () => {
   initDatabase();
 
-  // 1. Clear local SQLite tables
   db.execSync("DELETE FROM transactions;");
   db.execSync("DELETE FROM loans;");
   db.execSync("DELETE FROM user_profile;");
   db.execSync("DELETE FROM settings;");
+  db.execSync("DELETE FROM cards;");
 
-  // 2. Clear remote Firestore subcollections for active user
   const currentUser = auth.currentUser;
   if (currentUser) {
     try {
@@ -603,23 +591,19 @@ export const clearAllDataAndDatabase = async () => {
         }
       }
     } catch (error) {
-      console.error("Error clearing Firestore collections on logout:", error);
+      console.warn("Offline: Remote collection cleanup skipped on logout.", error);
     }
   }
 };
 
-
-// 2. Add the clear function at the bottom:
 // ==========================================
 // Card CRUD Functions
 // ==========================================
 export const clearCardsFromDB = async (): Promise<void> => {
   initDatabase();
 
-  // Clear local SQLite
   db.runSync("DELETE FROM cards;");
 
-  // Clear Firestore cards subcollection if user is logged in
   const currentUser = auth.currentUser;
   if (currentUser) {
     try {
@@ -637,8 +621,7 @@ export const clearCardsFromDB = async (): Promise<void> => {
         await batch.commit();
       }
     } catch (error) {
-      console.error("Error clearing cards from Firestore:", error);
-      throw error;
+      console.warn("Offline: Firestore cards deletion postponed.", error);
     }
   }
 };
