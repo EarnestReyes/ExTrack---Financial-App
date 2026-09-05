@@ -563,11 +563,11 @@ const unsubscribeCards = onSnapshot(
   const handleSaveLoan = async () => {
   if (!currentUser) return;
 
-  // 1. Parse string inputs to numbers
-  const parsedAmount = parseFloat(loanAmount) || 0;
+  // 1. Parse inputs: treat loanAmount as TOTAL loan balance
+  const parsedTotalAmount = parseFloat(loanAmount) || 0;
   const parsedDuration = parseInt(loanDuration, 10) || 0;
 
-  if (!loanTitle.trim() || parsedAmount <= 0 || parsedDuration <= 0) {
+  if (!loanTitle.trim() || parsedTotalAmount <= 0 || parsedDuration <= 0) {
     Alert.alert(
       "Incomplete Details",
       "Please provide a loan title, valid total amount, and duration in months."
@@ -575,25 +575,24 @@ const unsubscribeCards = onSnapshot(
     return;
   }
 
-  // 2. Calculate End Date
+  // 2. Calculate monthly installment and dates
+  const monthlyPayment = Math.round((parsedTotalAmount / parsedDuration) * 100) / 100;
+
   const loanEndDate = new Date(loanStartDate);
   loanEndDate.setMonth(loanEndDate.getMonth() + parsedDuration);
-
-  // 3. Calculate Annual Expense
-  const monthlyPayment = parsedAmount / parsedDuration;
-  const annualExpense = monthlyPayment * Math.min(parsedDuration, 12);
 
   setIsSavingLoan(true);
 
   try {
     const loanData = {
       title: loanTitle.trim(),
-      totalAmount: parsedAmount,
+      totalAmount: parsedTotalAmount, // Store actual principal/total balance here
+      monthlyPayment: monthlyPayment,  // Monthly installment amount
+      monthlyDeduction: monthlyPayment,
       durationMonths: parsedDuration,
-      startDate: loanStartDate.toISOString(),
-      endDate: loanEndDate.toISOString(),
-      annualExpense: annualExpense,
-      monthlyPayment: monthlyPayment,
+      remainingMonths: parsedDuration,
+      startDate: loanStartDate.toISOString().split("T")[0],
+      endDate: loanEndDate.toISOString().split("T")[0],
       createdAt: new Date().toISOString(),
     };
 

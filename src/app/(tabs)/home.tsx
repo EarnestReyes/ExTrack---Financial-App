@@ -86,11 +86,9 @@ const [overviewPeriod, setOverviewPeriod] = useState<
 const [balancePeriod, setBalancePeriod] =
   useState<typeof overviewPeriod>("Month");
 const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-// 1. Updated state type to LoanItem[] and standard camelCase naming
-const [loans, setLoanList] = useState<LoanItem[]>([]);
+// 1. Consolidated loan state to prevent stale SQLite/Firestore state mismatches
+const [loans, setLoans] = useState<LoanItem[]>([]);
 const [selectedLoan, setSelectedLoan] = useState<LoanItem | null>(null);
-const [loan, setLoans] = useState<LoanItem[]>([]);
-const [selectedLoans, setSelectedLoans] = useState<LoanItem | null>(null);
 
 const [selectedTransaction, setSelectedTransaction] =
   useState<TransactionItem | null>(null);
@@ -185,12 +183,15 @@ const unsubscribeTransactions = onSnapshot(
         id: data.id,
         firestoreId: docItem.id,
         name: data.name || "",
-        amount: Number(data.amount) || 0,
+        amount: parseFloat(data.amount) || 0,
         type: data.type || "",
         category: data.category || "",
         date: data.date || "",
         time: data.time || "",
         userId: currentUser.uid,
+        loanId: data.loanId,
+        loanPaymentDate: data.loanPaymentDate,
+        loanPaymentNumber: data.loanPaymentNumber,
       };
     });
 
@@ -229,7 +230,7 @@ const unsubscribeTransactions = onSnapshot(
         };
       });
 
-      setLoanList(remoteLoans);
+      setLoans(remoteLoans);
     },
     (error) => {
       console.error("Error listening to loans:", error);
@@ -681,7 +682,7 @@ const handleLoanPress = (loanItem: LoanItem) => {
     for (const loanDoc of loansSnapshot.docs) {
       const loan = loanDoc.data();
 
-      const monthlyPayment = Number(loan.monthlyPayment);
+      const monthlyPayment = Number(loan.totalAmount);
       const durationMonths = Number(loan.durationMonths);
 
       if (
