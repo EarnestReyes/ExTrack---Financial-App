@@ -568,27 +568,27 @@ export default function HomeScreen() {
   };
 
   const handleDeleteSelectedTransaction = async () => {
-    if (!selectedTransaction?.id) return;
+  if (!selectedTransaction?.id) return;
 
-    try {
-      // Pass local id, Firestore transaction document ID, and loanId
-      await deleteTransactionFromDB(
-        selectedTransaction.id,
-        selectedTransaction.firestoreId,
-        selectedTransaction.loanId,
-      );
+  try {
+    // Pass local id, Firestore transaction document ID, and loanId
+    await deleteTransactionFromDB(
+      selectedTransaction.id,
+      selectedTransaction.firestoreId,
+      selectedTransaction.loanId
+    );
 
-      // Update local React state to reflect immediate deletion
-      setTransactions((current) =>
-        current.filter((t) => t.id !== selectedTransaction.id),
-      );
+    // Update local React state to reflect immediate deletion
+    setTransactions((current) =>
+      current.filter((t) => t.id !== selectedTransaction.id)
+    );
 
-      closeTransactionActions();
-    } catch (error) {
-      console.error("Failed to delete transaction:", error);
-      Alert.alert("Error", "Failed to delete transaction from all records.");
-    }
-  };
+    closeTransactionActions();
+  } catch (error) {
+    console.error("Failed to delete transaction:", error);
+    Alert.alert("Error", "Failed to delete transaction from all records.");
+  }
+};
 
   // Draggable FAB with Gesture Distance Check
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;

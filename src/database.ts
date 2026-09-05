@@ -1,9 +1,9 @@
 import * as SQLite from "expo-sqlite";
+import NetInfo, { NetInfoState } from "@react-native-community/netinfo";
 import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   getDocs,
   query,
   setDoc,
@@ -11,6 +11,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { auth, db as firestoreDb } from "./config/firebase";
+import { onAuthStateChanged, User } from "firebase/auth";
 
 // Single SQLite Database Instance
 const db = SQLite.openDatabaseSync("finance.db");
@@ -51,7 +52,43 @@ export interface SavedCard {
   expiry: string;
 }
 
-// Single Initialization Function
+export interface SyncTask {
+  id: number;
+  action: "INSERT" | "UPDATE" | "DELETE";
+  entity: "transactions" | "loans" | "user_profile" | "cards";
+  firestoreId: string;
+  payload: string; // JSON String
+  createdAt: string;
+}
+
+// ==========================================
+// Network Listener Initialization
+// ==========================================
+
+NetInfo.addEventListener((state: NetInfoState) => {
+  if (state.isConnected) {
+    syncFromFirestore();
+  }
+});
+
+// ==========================================
+// Authentication Resolver
+// ==========================================
+export const getCurrentUser = (): Promise<User | null> => {
+  return new Promise((resolve) => {
+    if (auth.currentUser) {
+      return resolve(auth.currentUser);
+    }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      unsubscribe();
+      resolve(user);
+    });
+  });
+};
+
+// ==========================================
+// Initialization Function
+// ==========================================
 export const initDatabase = () => {
   db.execSync(`
     CREATE TABLE IF NOT EXISTS user_profile (
@@ -64,7 +101,7 @@ export const initDatabase = () => {
     );
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      firestoreId TEXT,
+      firestoreId TEXT UNIQUE,
       loanId TEXT,
       name TEXT NOT NULL,
       amount REAL NOT NULL,
@@ -75,7 +112,7 @@ export const initDatabase = () => {
     );
     CREATE TABLE IF NOT EXISTS loans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      firestoreId TEXT,
+      firestoreId TEXT UNIQUE,
       title TEXT NOT NULL,
       totalAmount REAL NOT NULL,
       monthlyPayment REAL NOT NULL,
@@ -87,13 +124,168 @@ export const initDatabase = () => {
     );
     CREATE TABLE IF NOT EXISTS cards (
       id TEXT PRIMARY KEY NOT NULL,
-      firestoreId TEXT,
+      firestoreId TEXT UNIQUE,
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       lastFour TEXT NOT NULL,
       expiry TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sync_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action TEXT NOT NULL,
+      entity TEXT NOT NULL,
+      firestoreId TEXT NOT NULL,
+      payload TEXT,
+      createdAt TEXT NOT NULL
+    );
   `);
+};
+
+// ==========================================
+// Sync Queue Management
+// ==========================================
+const enqueueSyncTask = (
+  action: "INSERT" | "UPDATE" | "DELETE",
+  entity: "transactions" | "loans" | "user_profile" | "cards",
+  firestoreId: string,
+  payload: any = {}
+) => {
+  initDatabase();
+  db.runSync(
+    "INSERT INTO sync_queue (action, entity, firestoreId, payload, createdAt) VALUES (?, ?, ?, ?, ?)",
+    [
+      action,
+      entity,
+      firestoreId,
+      JSON.stringify(payload),
+      new Date().toISOString(),
+    ]
+  );
+};
+
+export const processSyncQueue = async (): Promise<void> => {
+  initDatabase();
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const tasks = db.getAllSync<SyncTask>(
+    "SELECT * FROM sync_queue ORDER BY id ASC"
+  );
+  if (tasks.length === 0) return;
+
+  for (const task of tasks) {
+    try {
+      const payload = task.payload ? JSON.parse(task.payload) : {};
+      const userPath = `users/${user.uid}`;
+
+      if (task.entity === "user_profile") {
+        if (task.action === "UPDATE") {
+          const userRef = doc(firestoreDb, "users", user.uid);
+          await setDoc(userRef, payload, { merge: true });
+        }
+      } else {
+        const docRef = doc(firestoreDb, userPath, task.entity, task.firestoreId);
+        if (task.action === "INSERT" || task.action === "UPDATE") {
+          await setDoc(docRef, payload, { merge: true });
+        } else if (task.action === "DELETE") {
+          await deleteDoc(docRef);
+        }
+      }
+
+      // Remove task on successful execution
+      db.runSync("DELETE FROM sync_queue WHERE id = ?", [task.id]);
+    } catch (error) {
+      console.warn(`Sync queue execution deferred for item ${task.id}:`, error);
+      break; // Halt processing until next online reconnect
+    }
+  }
+};
+
+const safeFirestoreWrite = async (
+  action: "INSERT" | "UPDATE" | "DELETE",
+  entity: "transactions" | "loans" | "user_profile" | "cards",
+  firestoreId: string,
+  payload: any,
+  operation: () => Promise<void>
+): Promise<void> => {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    enqueueSyncTask(action, entity, firestoreId, payload);
+    return;
+  }
+
+  try {
+    await operation();
+  } catch (error) {
+    console.warn("Offline or network drop. Queuing operation for background sync:", error);
+    enqueueSyncTask(action, entity, firestoreId, payload);
+  }
+};
+
+// ==========================================
+// Pull Remote Data Operations
+// ==========================================
+export const syncFromFirestore = async (): Promise<void> => {
+  initDatabase();
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  // Process outbound sync queue prior to pulling latest state
+  await processSyncQueue();
+
+  try {
+    const userPath = `users/${user.uid}`;
+
+    // Pull Transactions
+    const txSnapshot = await getDocs(collection(firestoreDb, userPath, "transactions"));
+    txSnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      db.runSync(
+        `INSERT INTO transactions (firestoreId, loanId, name, amount, type, category, date, time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(firestoreId) DO UPDATE SET
+            loanId=excluded.loanId, name=excluded.name, amount=excluded.amount,
+            type=excluded.type, category=excluded.category, date=excluded.date, time=excluded.time`,
+        [
+          docSnap.id,
+          data.loanId || null,
+          data.name,
+          data.amount,
+          data.type,
+          data.category,
+          data.date,
+          data.time,
+        ]
+      );
+    });
+
+    // Pull Loans
+    const loanSnapshot = await getDocs(collection(firestoreDb, userPath, "loans"));
+    loanSnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      db.runSync(
+        `INSERT INTO loans (firestoreId, title, totalAmount, monthlyPayment, annualExpense, durationMonths, startDate, endDate, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(firestoreId) DO UPDATE SET
+            title=excluded.title, totalAmount=excluded.totalAmount, monthlyPayment=excluded.monthlyPayment,
+            annualExpense=excluded.annualExpense, durationMonths=excluded.durationMonths,
+            startDate=excluded.startDate, endDate=excluded.endDate`,
+        [
+          docSnap.id,
+          data.title,
+          data.totalAmount,
+          data.monthlyPayment,
+          data.annualExpense,
+          data.durationMonths,
+          data.startDate,
+          data.endDate,
+          data.createdAt || new Date().toISOString(),
+        ]
+      );
+    });
+  } catch (error) {
+    console.warn("Pull sync skipped due to network connection:", error);
+  }
 };
 
 // ==========================================
@@ -128,13 +320,23 @@ export const fetchTransactionsFromDB = (): TransactionItem[] => {
 
 export const insertTransactionToDB = async (
   transaction: TransactionItem
-): Promise<{ id: number; firestoreId?: string }> => {
+): Promise<{ id: number; firestoreId: string }> => {
   initDatabase();
+  const user = await getCurrentUser();
+
+  // Pre-generate Firestore ID offline or online
+  const collectionRef = collection(
+    firestoreDb,
+    "users",
+    user?.uid || "pending",
+    "transactions"
+  );
+  const firestoreId = transaction.firestoreId || doc(collectionRef).id;
 
   const result = db.runSync(
     "INSERT INTO transactions (firestoreId, loanId, name, amount, type, category, date, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     [
-      transaction.firestoreId || null,
+      firestoreId,
       transaction.loanId || null,
       transaction.name,
       transaction.amount,
@@ -146,36 +348,23 @@ export const insertTransactionToDB = async (
   );
 
   const insertedId = result.lastInsertRowId;
-  const currentUser = auth.currentUser;
-  let firestoreId: string | undefined;
+  const payload = {
+    id: insertedId,
+    name: transaction.name,
+    amount: transaction.amount,
+    type: transaction.type,
+    category: transaction.category,
+    date: transaction.date,
+    time: transaction.time,
+    loanId: transaction.loanId || null,
+    createdAt: new Date().toISOString(),
+  };
 
-  if (currentUser) {
-    try {
-      const userTransactionsRef = collection(
-        firestoreDb,
-        "users",
-        currentUser.uid,
-        "transactions"
-      );
-
-      const docRef = doc(userTransactionsRef);
-      firestoreId = docRef.id;
-
-      await setDoc(docRef, {
-        id: insertedId,
-        name: transaction.name,
-        amount: transaction.amount,
-        type: transaction.type,
-        category: transaction.category,
-        date: transaction.date,
-        time: transaction.time,
-        loanId: transaction.loanId || null,
-        createdAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error("Error writing transaction to Firestore:", error);
-    }
-  }
+  await safeFirestoreWrite("INSERT", "transactions", firestoreId, payload, async () => {
+    if (!user) return;
+    const docRef = doc(firestoreDb, "users", user.uid, "transactions", firestoreId);
+    await setDoc(docRef, payload);
+  });
 
   return { id: insertedId, firestoreId };
 };
@@ -186,10 +375,17 @@ export const updateTransactionInDB = async (
   if (!transaction.id && !transaction.firestoreId) return;
   initDatabase();
 
-  const numericId = transaction.id ? Number(transaction.id) : null;
+  let firestoreId = transaction.firestoreId;
 
-  // 1. Update in local SQLite
-  if (numericId) {
+  if (transaction.id && !firestoreId) {
+    const row = db.getFirstSync<{ firestoreId: string }>(
+      "SELECT firestoreId FROM transactions WHERE id = ?",
+      [transaction.id]
+    );
+    if (row?.firestoreId) firestoreId = row.firestoreId;
+  }
+
+  if (transaction.id) {
     db.runSync(
       "UPDATE transactions SET name = ?, amount = ?, type = ?, category = ?, date = ?, time = ? WHERE id = ?",
       [
@@ -199,67 +395,30 @@ export const updateTransactionInDB = async (
         transaction.category,
         transaction.date,
         transaction.time,
-        numericId,
+        transaction.id,
       ]
     );
   }
 
-  // 2. Update in Firebase Firestore
-  const currentUser = auth.currentUser;
-  if (!currentUser) return;
+  if (!firestoreId) return;
 
-  try {
-    const transactionsRef = collection(
-      firestoreDb,
-      "users",
-      currentUser.uid,
-      "transactions"
-    );
+  const payload = {
+    name: transaction.name,
+    amount: transaction.amount,
+    type: transaction.type,
+    category: transaction.category,
+    date: transaction.date,
+    time: transaction.time,
+    loanId: transaction.loanId || null,
+    updatedAt: new Date().toISOString(),
+  };
 
-    if (transaction.firestoreId) {
-      const docRef = doc(transactionsRef, transaction.firestoreId);
-      await setDoc(
-        docRef,
-        {
-          name: transaction.name,
-          amount: transaction.amount,
-          type: transaction.type,
-          category: transaction.category,
-          date: transaction.date,
-          time: transaction.time,
-          loanId: transaction.loanId || null,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-    } else if (numericId) {
-      const q = query(transactionsRef, where("id", "==", numericId));
-      const snapshot = await getDocs(q);
-
-      if (!snapshot.empty) {
-        const batch = writeBatch(firestoreDb);
-        snapshot.forEach((document) => {
-          batch.set(
-            document.ref,
-            {
-              name: transaction.name,
-              amount: transaction.amount,
-              type: transaction.type,
-              category: transaction.category,
-              date: transaction.date,
-              time: transaction.time,
-              loanId: transaction.loanId || null,
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-        });
-        await batch.commit();
-      }
-    }
-  } catch (error) {
-    console.error("Error updating transaction in Firestore:", error);
-  }
+  await safeFirestoreWrite("UPDATE", "transactions", firestoreId, payload, async () => {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const docRef = doc(firestoreDb, "users", user.uid, "transactions", firestoreId);
+    await setDoc(docRef, payload, { merge: true });
+  });
 };
 
 export const deleteTransactionFromDB = async (
@@ -269,39 +428,28 @@ export const deleteTransactionFromDB = async (
 ): Promise<void> => {
   initDatabase();
 
-  const numericId = id ? Number(id) : undefined;
+  let targetFirestoreId = firestoreId;
 
-  if (numericId && !isNaN(numericId) && numericId > 0) {
-    db.runSync("DELETE FROM transactions WHERE id = ?", [numericId]);
+  if (id && !targetFirestoreId) {
+    const row = db.getFirstSync<{ firestoreId: string }>(
+      "SELECT firestoreId FROM transactions WHERE id = ?",
+      [Number(id)]
+    );
+    if (row?.firestoreId) targetFirestoreId = row.firestoreId;
   }
 
-  const currentUser = auth.currentUser;
-  if (!currentUser) return;
-
-  const userPath = `users/${currentUser.uid}`;
-
-  try {
-    if (firestoreId) {
-      const txRef = doc(firestoreDb, userPath, "transactions", firestoreId);
-      await deleteDoc(txRef);
-      return;
-    }
-
-    if (numericId && !isNaN(numericId) && numericId > 0) {
-      const transactionsRef = collection(firestoreDb, userPath, "transactions");
-      const q = query(transactionsRef, where("id", "==", numericId));
-      const snapshot = await getDocs(q);
-
-      if (!snapshot.empty) {
-        const batch = writeBatch(firestoreDb);
-        snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-        await batch.commit();
-      }
-    }
-  } catch (error) {
-    console.error("Error deleting record from Firestore:", error);
-    throw error;
+  if (id) {
+    db.runSync("DELETE FROM transactions WHERE id = ?", [Number(id)]);
   }
+
+  if (!targetFirestoreId) return;
+
+  await safeFirestoreWrite("DELETE", "transactions", targetFirestoreId, {}, async () => {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const txRef = doc(firestoreDb, `users/${user.uid}/transactions`, targetFirestoreId);
+    await deleteDoc(txRef);
+  });
 };
 
 // ==========================================
@@ -314,15 +462,18 @@ export const fetchLoansFromDB = (): LoanItem[] => {
 
 export const insertLoanToDB = async (
   loan: LoanItem
-): Promise<{ id: number; firestoreId?: string }> => {
+): Promise<{ id: number; firestoreId: string }> => {
   initDatabase();
-
+  const user = await getCurrentUser();
   const createdAt = loan.createdAt || new Date().toISOString();
+
+  const collectionRef = collection(firestoreDb, "users", user?.uid || "pending", "loans");
+  const firestoreId = loan.firestoreId || doc(collectionRef).id;
 
   const result = db.runSync(
     "INSERT INTO loans (firestoreId, title, totalAmount, monthlyPayment, annualExpense, durationMonths, startDate, endDate, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
-      loan.firestoreId || null,
+      firestoreId,
       loan.title,
       loan.totalAmount,
       loan.monthlyPayment,
@@ -335,36 +486,23 @@ export const insertLoanToDB = async (
   );
 
   const insertedId = result.lastInsertRowId;
-  const currentUser = auth.currentUser;
-  let firestoreId: string | undefined;
+  const payload = {
+    id: insertedId,
+    title: loan.title,
+    totalAmount: loan.totalAmount,
+    monthlyPayment: loan.monthlyPayment,
+    annualExpense: loan.annualExpense,
+    durationMonths: loan.durationMonths,
+    startDate: loan.startDate,
+    endDate: loan.endDate,
+    createdAt: createdAt,
+  };
 
-  if (currentUser) {
-    try {
-      const userLoansRef = collection(
-        firestoreDb,
-        "users",
-        currentUser.uid,
-        "loans"
-      );
-
-      const docRef = doc(userLoansRef);
-      firestoreId = docRef.id;
-
-      await setDoc(docRef, {
-        id: insertedId,
-        title: loan.title,
-        totalAmount: loan.totalAmount,
-        monthlyPayment: loan.monthlyPayment,
-        annualExpense: loan.annualExpense,
-        durationMonths: loan.durationMonths,
-        startDate: loan.startDate,
-        endDate: loan.endDate,
-        createdAt: createdAt,
-      });
-    } catch (error) {
-      console.error("Error writing loan to Firestore:", error);
-    }
-  }
+  await safeFirestoreWrite("INSERT", "loans", firestoreId, payload, async () => {
+    if (!user) return;
+    const docRef = doc(firestoreDb, "users", user.uid, "loans", firestoreId);
+    await setDoc(docRef, payload);
+  });
 
   return { id: insertedId, firestoreId };
 };
@@ -373,9 +511,16 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
   if (!loan.id && !loan.firestoreId) return;
   initDatabase();
 
-  const numericId = loan.id ? Number(loan.id) : null;
+  let firestoreId = loan.firestoreId;
+  if (loan.id && !firestoreId) {
+    const row = db.getFirstSync<{ firestoreId: string }>(
+      "SELECT firestoreId FROM loans WHERE id = ?",
+      [loan.id]
+    );
+    if (row?.firestoreId) firestoreId = row.firestoreId;
+  }
 
-  if (numericId) {
+  if (loan.id) {
     db.runSync(
       "UPDATE loans SET title = ?, totalAmount = ?, monthlyPayment = ?, annualExpense = ?, durationMonths = ?, startDate = ?, endDate = ? WHERE id = ?",
       [
@@ -386,66 +531,30 @@ export const updateLoanInDB = async (loan: LoanItem): Promise<void> => {
         loan.durationMonths,
         loan.startDate,
         loan.endDate,
-        numericId,
+        loan.id,
       ]
     );
   }
 
-  const currentUser = auth.currentUser;
-  if (!currentUser) return;
+  if (!firestoreId) return;
 
-  try {
-    const loansRef = collection(
-      firestoreDb,
-      "users",
-      currentUser.uid,
-      "loans"
-    );
+  const payload = {
+    title: loan.title,
+    totalAmount: loan.totalAmount,
+    monthlyPayment: loan.monthlyPayment,
+    annualExpense: loan.annualExpense,
+    durationMonths: loan.durationMonths,
+    startDate: loan.startDate,
+    endDate: loan.endDate,
+    updatedAt: new Date().toISOString(),
+  };
 
-    if (loan.firestoreId) {
-      const docRef = doc(loansRef, loan.firestoreId);
-      await setDoc(
-        docRef,
-        {
-          title: loan.title,
-          totalAmount: loan.totalAmount,
-          monthlyPayment: loan.monthlyPayment,
-          annualExpense: loan.annualExpense,
-          durationMonths: loan.durationMonths,
-          startDate: loan.startDate,
-          endDate: loan.endDate,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-    } else if (numericId) {
-      const q = query(loansRef, where("id", "==", numericId));
-      const snapshot = await getDocs(q);
-
-      if (!snapshot.empty) {
-        const batch = writeBatch(firestoreDb);
-        snapshot.forEach((document) => {
-          batch.set(
-            document.ref,
-            {
-              title: loan.title,
-              totalAmount: loan.totalAmount,
-              monthlyPayment: loan.monthlyPayment,
-              annualExpense: loan.annualExpense,
-              durationMonths: loan.durationMonths,
-              startDate: loan.startDate,
-              endDate: loan.endDate,
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-        });
-        await batch.commit();
-      }
-    }
-  } catch (error) {
-    console.error("Error updating loan in Firestore:", error);
-  }
+  await safeFirestoreWrite("UPDATE", "loans", firestoreId, payload, async () => {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const docRef = doc(firestoreDb, "users", user.uid, "loans", firestoreId);
+    await setDoc(docRef, payload, { merge: true });
+  });
 };
 
 export const deleteLoanFromDB = async (
@@ -454,65 +563,50 @@ export const deleteLoanFromDB = async (
 ): Promise<void> => {
   initDatabase();
 
-  const numericId = id ? Number(id) : undefined;
-
-  try {
-    if (numericId && !isNaN(numericId) && numericId > 0) {
-      db.runSync("DELETE FROM loans WHERE id = ?", [numericId]);
-    }
-
-    const currentUser = auth.currentUser;
-    if (currentUser) {
-      const userPath = `users/${currentUser.uid}`;
-
-      if (firestoreId) {
-        const loanRef = doc(firestoreDb, userPath, "loans", firestoreId);
-        await deleteDoc(loanRef);
-      } else if (numericId && !isNaN(numericId) && numericId > 0) {
-        const loansRef = collection(firestoreDb, userPath, "loans");
-        const q = query(loansRef, where("id", "==", numericId));
-        const snapshot = await getDocs(q);
-
-        if (!snapshot.empty) {
-          const batch = writeBatch(firestoreDb);
-          snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-          await batch.commit();
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Error executing delete loan query:", error);
-    throw error;
+  let targetFirestoreId = firestoreId;
+  if (id && !targetFirestoreId) {
+    const row = db.getFirstSync<{ firestoreId: string }>(
+      "SELECT firestoreId FROM loans WHERE id = ?",
+      [Number(id)]
+    );
+    if (row?.firestoreId) targetFirestoreId = row.firestoreId;
   }
+
+  if (id) {
+    db.runSync("DELETE FROM loans WHERE id = ?", [Number(id)]);
+  }
+
+  if (!targetFirestoreId) return;
+
+  await safeFirestoreWrite("DELETE", "loans", targetFirestoreId, {}, async () => {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const loanRef = doc(firestoreDb, `users/${user.uid}/loans`, targetFirestoreId);
+    await deleteDoc(loanRef);
+  });
 };
 
 export const deleteMasterLoanFromDB = async (loanId: string): Promise<void> => {
   initDatabase();
 
+  const transactions = db.getAllSync<{ firestoreId: string }>(
+    "SELECT firestoreId FROM transactions WHERE loanId = ?",
+    [loanId]
+  );
+
   db.runSync("DELETE FROM transactions WHERE loanId = ?", [loanId]);
-  db.runSync("DELETE FROM loans WHERE firestoreId = ? OR id = ?", [loanId, Number(loanId) || -1]);
+  db.runSync("DELETE FROM loans WHERE firestoreId = ? OR id = ?", [
+    loanId,
+    Number(loanId) || -1,
+  ]);
 
-  const currentUser = auth.currentUser;
-  if (!currentUser) return;
-
-  const userPath = `users/${currentUser.uid}`;
-
-  try {
-    const transactionsRef = collection(firestoreDb, userPath, "transactions");
-    const paymentQuery = query(transactionsRef, where("loanId", "==", loanId));
-    const paymentSnapshot = await getDocs(paymentQuery);
-
-    const batch = writeBatch(firestoreDb);
-    paymentSnapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-
-    const loanRef = doc(firestoreDb, userPath, "loans", loanId);
-    batch.delete(loanRef);
-
-    await batch.commit();
-  } catch (error) {
-    console.error("Error deleting master loan:", error);
-    throw error;
+  for (const tx of transactions) {
+    if (tx.firestoreId) {
+      await deleteTransactionFromDB(undefined, tx.firestoreId);
+    }
   }
+
+  await deleteLoanFromDB(undefined, loanId);
 };
 
 // ==========================================
@@ -531,18 +625,17 @@ export const setUserProfilePicture = async (
       [profilePicUri]
     );
 
-    const currentUser = auth.currentUser;
-    if (currentUser) {
-      const userRef = doc(firestoreDb, "users", currentUser.uid);
-      await setDoc(
-        userRef,
-        {
-          photoURL: profilePicUri,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-    }
+    const payload = {
+      photoURL: profilePicUri,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await safeFirestoreWrite("UPDATE", "user_profile", "profile", payload, async () => {
+      const user = await getCurrentUser();
+      if (!user) return;
+      const userRef = doc(firestoreDb, "users", user.uid);
+      await setDoc(userRef, payload, { merge: true });
+    });
 
     return true;
   } catch (error) {
@@ -589,30 +682,31 @@ export const clearAllDataAndDatabase = async () => {
   db.execSync("DELETE FROM user_profile;");
   db.execSync("DELETE FROM settings;");
   db.execSync("DELETE FROM cards;");
+  db.execSync("DELETE FROM sync_queue;");
 
-  const currentUser = auth.currentUser;
-  if (currentUser) {
-    try {
-      const userPath = `users/${currentUser.uid}`;
-      const collectionsToDelete = ["transactions", "cards", "loans"];
+  const user = await getCurrentUser();
+  if (!user) return;
 
-      for (const colName of collectionsToDelete) {
-        const colRef = collection(firestoreDb, userPath, colName);
-        const snapshot = await getDocs(colRef);
+  try {
+    const userPath = `users/${user.uid}`;
+    const collectionsToDelete = ["transactions", "cards", "loans"];
 
-        if (!snapshot.empty) {
-          const docs = snapshot.docs;
-          for (let i = 0; i < docs.length; i += 500) {
-            const batch = writeBatch(firestoreDb);
-            const chunk = docs.slice(i, i + 500);
-            chunk.forEach((docSnap) => batch.delete(docSnap.ref));
-            await batch.commit();
-          }
+    for (const colName of collectionsToDelete) {
+      const colRef = collection(firestoreDb, userPath, colName);
+      const snapshot = await getDocs(colRef);
+
+      if (!snapshot.empty) {
+        const docs = snapshot.docs;
+        for (let i = 0; i < docs.length; i += 500) {
+          const batch = writeBatch(firestoreDb);
+          const chunk = docs.slice(i, i + 500);
+          chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+          await batch.commit();
         }
       }
-    } catch (error) {
-      console.error("Error clearing Firestore collections on logout:", error);
     }
+  } catch (error) {
+    console.warn("Remote database clear deferred (network offline):", error);
   }
 };
 
@@ -624,25 +718,19 @@ export const clearCardsFromDB = async (): Promise<void> => {
 
   db.runSync("DELETE FROM cards;");
 
-  const currentUser = auth.currentUser;
-  if (currentUser) {
-    try {
-      const cardsRef = collection(
-        firestoreDb,
-        "users",
-        currentUser.uid,
-        "cards"
-      );
-      const snapshot = await getDocs(cardsRef);
+  const user = await getCurrentUser();
+  if (!user) return;
 
-      if (!snapshot.empty) {
-        const batch = writeBatch(firestoreDb);
-        snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-        await batch.commit();
-      }
-    } catch (error) {
-      console.error("Error clearing cards from Firestore:", error);
-      throw error;
+  try {
+    const cardsRef = collection(firestoreDb, "users", user.uid, "cards");
+    const snapshot = await getDocs(cardsRef);
+
+    if (!snapshot.empty) {
+      const batch = writeBatch(firestoreDb);
+      snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
+      await batch.commit();
     }
+  } catch (error) {
+    console.warn("Remote card clear deferred (network offline):", error);
   }
 };

@@ -1,25 +1,51 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    useColorScheme,
-    View,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { collection, getDocs, QueryDocumentSnapshot } from "firebase/firestore";
+import { auth, db as firestoreDb } from "@/config/firebase";
 import {
-    fetchTransactionsFromDB,
-    getThemePreference,
-    TransactionItem,
+  fetchTransactionsFromDB,
+  getThemePreference,
+  TransactionItem,
 } from "../database";
 
 type StatementPeriod = "This Month" | "This Year" | "All Time";
 
-const parseTransactionDate = (date: string) => {
-  const [year, month, day] = date.split("-").map(Number);
-  return new Date(year, month - 1, day);
+// Safe date parser handling YYYY-MM-DD, ISO strings, and slashes
+const parseTransactionDate = (dateStr?: string): Date | null => {
+  if (!dateStr) return null;
+
+  const cleanDateStr = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
+  const parts = cleanDateStr.split(/[-/]/).map(Number);
+
+  if (parts.length === 3 && !parts.some(isNaN)) {
+    const [year, month, day] = parts;
+    return new Date(year, month - 1, day);
+  }
+
+  const fallbackDate = new Date(dateStr);
+  return isNaN(fallbackDate.getTime()) ? null : fallbackDate;
+};
+
+// Helper function to identify expense/deduction transaction types
+const isExpenseType = (type?: string) => {
+  if (!type) return false;
+  const normalized = type.toLowerCase();
+  return (
+    normalized === "expense" ||
+    normalized === "loan" ||
+    normalized === "loan payment" ||
+    normalized === "loan deduction" ||
+    normalized === "deduction"
+  );
 };
 
 export default function StatementsScreen() {
@@ -32,34 +58,90 @@ export default function StatementsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const savedTheme = getThemePreference();
-      setIsDarkMode(
-        savedTheme ? savedTheme === "dark" : systemColorScheme === "dark",
-      );
-      setTransactions(fetchTransactionsFromDB());
-    }, [systemColorScheme]),
+      const loadTransactions = async () => {
+        // 1. Get saved theme
+        const savedTheme = getThemePreference();
+        setIsDarkMode(
+          savedTheme ? savedTheme === "dark" : systemColorScheme === "dark"
+        );
+
+        // 2. Fetch local SQLite transactions
+        const localTransactions = fetchTransactionsFromDB();
+        let combinedTransactions = [...localTransactions];
+
+        // 3. Fetch remote Firestore transactions (includes auto loan deductions)
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          try {
+            const userPath = `users/${currentUser.uid}`;
+            const transactionsRef = collection(firestoreDb, userPath, "transactions");
+            const snapshot = await getDocs(transactionsRef);
+
+            const remoteTransactions: TransactionItem[] = snapshot.docs.map(
+              (docSnap: QueryDocumentSnapshot) => {
+                const data = docSnap.data();
+                return {
+                  firestoreId: docSnap.id,
+                  id: data.id,
+                  name: data.name,
+                  amount: Number(data.amount) || 0,
+                  type: data.type,
+                  category: data.category,
+                  date: data.date,
+                  time: data.time,
+                  loanId: data.loanId || null,
+                };
+              }
+            );
+
+            // Deduplicate items present in both SQLite and Firestore
+            const localIds = new Set(localTransactions.map((t) => t.id));
+            const newRemoteItems = remoteTransactions.filter(
+              (rt) => !rt.id || !localIds.has(rt.id)
+            );
+
+            combinedTransactions = [...localTransactions, ...newRemoteItems];
+          } catch (error) {
+            console.error("Error syncing Firestore transactions for statements:", error);
+          }
+        }
+
+        setTransactions(combinedTransactions);
+      };
+
+      loadTransactions();
+    }, [systemColorScheme])
   );
 
   const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
   const filteredTransactions = transactions.filter((transaction) => {
     if (period === "All Time") return true;
+
     const transactionDate = parseTransactionDate(transaction.date);
-    if (period === "This Year")
-      return transactionDate.getFullYear() === now.getFullYear();
+    if (!transactionDate) return false;
+
+    if (period === "This Year") {
+      return transactionDate.getFullYear() === currentYear;
+    }
+
     return (
-      transactionDate.getFullYear() === now.getFullYear() &&
-      transactionDate.getMonth() === now.getMonth()
+      transactionDate.getFullYear() === currentYear &&
+      transactionDate.getMonth() === currentMonth
     );
   });
 
   const incoming = filteredTransactions
-    .filter((transaction) => transaction.type === "Income")
+    .filter((transaction) => transaction.type?.toLowerCase() === "income")
     .reduce((total, transaction) => total + transaction.amount, 0);
-  const outgoing = filteredTransactions
-    .filter((transaction) => transaction.type === "Expense")
-    .reduce((total, transaction) => total + transaction.amount, 0);
-  const netChange = incoming - outgoing;
 
+  const outgoing = filteredTransactions
+    .filter((transaction) => isExpenseType(transaction.type))
+    .reduce((total, transaction) => total + transaction.amount, 0);
+
+  const netChange = incoming - outgoing;
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <ScrollView
