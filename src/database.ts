@@ -51,6 +51,7 @@ export interface SavedCard {
 }
 
 // Single Initialization Function
+// 1. Update initDatabase to include the cards table:
 export const initDatabase = () => {
   db.execSync(`
     CREATE TABLE IF NOT EXISTS user_profile (
@@ -80,6 +81,13 @@ export const initDatabase = () => {
       startDate TEXT NOT NULL,
       endDate TEXT NOT NULL,
       createdAt TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS cards (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      lastFour TEXT NOT NULL,
+      expiry TEXT NOT NULL
     );
   `);
 };
@@ -596,6 +604,41 @@ export const clearAllDataAndDatabase = async () => {
       }
     } catch (error) {
       console.error("Error clearing Firestore collections on logout:", error);
+    }
+  }
+};
+
+
+// 2. Add the clear function at the bottom:
+// ==========================================
+// Card CRUD Functions
+// ==========================================
+export const clearCardsFromDB = async (): Promise<void> => {
+  initDatabase();
+
+  // Clear local SQLite
+  db.runSync("DELETE FROM cards;");
+
+  // Clear Firestore cards subcollection if user is logged in
+  const currentUser = auth.currentUser;
+  if (currentUser) {
+    try {
+      const cardsRef = collection(
+        firestoreDb,
+        "users",
+        currentUser.uid,
+        "cards"
+      );
+      const snapshot = await getDocs(cardsRef);
+
+      if (!snapshot.empty) {
+        const batch = writeBatch(firestoreDb);
+        snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
+        await batch.commit();
+      }
+    } catch (error) {
+      console.error("Error clearing cards from Firestore:", error);
+      throw error;
     }
   }
 };

@@ -54,6 +54,10 @@ interface GraphDataItem {
 const { width, height } = Dimensions.get("window");
 
 export default function HomeScreen() {
+
+  const [showTransactionsModal, setShowTransactionsModal] = useState(false);
+  const [showLoansModal, setShowLoansModal] = useState(false);
+  const INITIAL_COUNT = 3;
   
   const router = useRouter();
   const systemColorScheme = useColorScheme();
@@ -1078,83 +1082,96 @@ const handleDeleteSelectedLoan = async () => {
           )}
         </View>
 
-        {/* RECENT TRANSACTIONS */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
-        </View>
+        {/* RECENT TRANSACTIONS CONTAINER */}
+<View style={styles.cardContainer}>
+  {/* RECENT TRANSACTIONS HEADER */}
+  <View style={styles.sectionHeader}>
+    <Text style={styles.sectionTitle}>Recent Transactions</Text>
+  </View>
 
-        {/* FILTERS */}
-        <View style={styles.filterContainer}>
-          {["All", "Income", "Expense"].map((f) => (
-            <TouchableOpacity
-              key={f}
-              style={[
-                styles.filterChip,
-                filter === f && styles.filterChipActive,
-              ]}
-              onPress={() => setFilter(f)}
-            >
-              <Text
-                style={[
-                  styles.filterText,
-                  filter === f && styles.filterTextActive,
-                ]}
-              >
-                {f}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-                {/* LIST TRANSACTIONS */}
-{filteredTransactions.length > 0 ? (
-  filteredTransactions.map((item) => (
-    <TouchableOpacity
-      key={item.id}
-      style={styles.transactionCard}
-      onPress={() => handleTransactionPress(item)}
-      activeOpacity={0.75}
-      accessibilityLabel={`Open actions for ${item.name}`}
-    >
-      <View style={styles.transactionLeft}>
-        <Text style={styles.transactionIcon}>
-          {getCategoryIcon(item.category)}
+  {/* FILTERS */}
+  <View style={styles.filterContainer}>
+    {["All", "Income", "Expense"].map((f) => (
+      <TouchableOpacity
+        key={f}
+        style={[
+          styles.filterChip,
+          filter === f && styles.filterChipActive,
+        ]}
+        onPress={() => setFilter(f)}
+      >
+        <Text
+          style={[
+            styles.filterText,
+            filter === f && styles.filterTextActive,
+          ]}
+        >
+          {f}
         </Text>
-        <View>
-          <Text style={styles.transactionName}>{item.name}</Text>
-          <Text style={styles.transactionCategory}>
-            {item.category} • {item.date}
+      </TouchableOpacity>
+    ))}
+  </View>
+
+  {/* LIST TRANSACTIONS */}
+  {filteredTransactions.length > 0 ? (
+    filteredTransactions.slice(0, INITIAL_COUNT).map((item) => (
+      <TouchableOpacity
+        key={item.id}
+        style={styles.transactionCard}
+        onPress={() => handleTransactionPress(item)}
+        activeOpacity={0.75}
+        accessibilityLabel={`Open actions for ${item.name}`}
+      >
+        <View style={styles.transactionLeft}>
+          <Text style={styles.transactionIcon}>
+            {getCategoryIcon(item.category)}
+          </Text>
+          <View>
+            <Text style={styles.transactionName}>{item.name}</Text>
+            <Text style={styles.transactionCategory}>
+              {item.category} • {item.date}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.transactionRight}>
+          <Text
+            style={
+              item.type === "Income"
+                ? styles.incomeText
+                : styles.expenseText
+            }
+          >
+            {item.type === "Income" ? "+" : "-"}₱
+            {item.amount.toLocaleString()}
           </Text>
         </View>
-      </View>
-      <View style={styles.transactionRight}>
-        <Text
-          style={
-            item.type === "Income"
-              ? styles.incomeText
-              : styles.expenseText
-          }
-        >
-          {item.type === "Income" ? "+" : "-"}₱
-          {item.amount.toLocaleString()}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  ))
-) : (
-  <View style={styles.emptyContainer}>
-    <Text style={styles.emptyText}>No Transactions Found.</Text>
-  </View>
-)}
+      </TouchableOpacity>
+    ))
+  ) : (
+    <View style={styles.emptyContainer}>
+      <Text style={styles.emptyText}>No Transactions Found.</Text>
+    </View>
+  )}
 
-{/* ACTIVE LOANS LIST */}
+  {/* SEE MORE BUTTON (OPENS TRANSACTIONS MODAL) */}
+  {filteredTransactions.length > INITIAL_COUNT && (
+    <TouchableOpacity
+      style={styles.seeMoreButton}
+      onPress={() => setShowTransactionsModal(true)}
+    >
+      <Text style={styles.seeMoreText}>See More</Text>
+    </TouchableOpacity>
+  )}
+</View>
+
+{/* ACTIVE LOANS CONTAINER */}
 {loans && loans.length > 0 && (
-  <>
+  <View style={styles.cardContainer}>
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>Active Loans</Text>
     </View>
 
-    {loans.map((item, index) => (
+    {loans.slice(0, INITIAL_COUNT).map((item, index) => (
       <TouchableOpacity
         key={item.id || item.firestoreId || `loan-${index}`}
         style={styles.transactionCard}
@@ -1166,7 +1183,8 @@ const handleDeleteSelectedLoan = async () => {
           <Text style={styles.transactionIcon}>🏦</Text>
           <View>
             <Text style={styles.transactionName}>
-              {item.title} • {item.startDate ? item.startDate.split("T")[0] : ""}
+              {item.title} •{" "}
+              {item.startDate ? item.startDate.split("T")[0] : ""}
             </Text>
             <Text style={styles.transactionCategory}>
               Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
@@ -1180,8 +1198,134 @@ const handleDeleteSelectedLoan = async () => {
         </View>
       </TouchableOpacity>
     ))}
-  </>
+
+    {/* SEE MORE BUTTON (OPENS LOANS MODAL) */}
+    {loans.length > INITIAL_COUNT && (
+      <TouchableOpacity
+        style={styles.seeMoreButton}
+        onPress={() => setShowLoansModal(true)}
+      >
+        <Text style={styles.seeMoreText}>See More</Text>
+      </TouchableOpacity>
+    )}
+  </View>
 )}
+
+{/* ALL TRANSACTIONS SCROLLABLE MODAL FORM */}
+<Modal
+  visible={showTransactionsModal}
+  animationType="slide"
+  transparent={false}
+  onRequestClose={() => setShowTransactionsModal(false)}
+>
+  <View style={styles.fullModalContainer}>
+    <View style={styles.fullModalHeader}>
+      <Text style={styles.fullModalTitle}>All Transactions</Text>
+      <TouchableOpacity
+        style={styles.closeModalButton}
+        onPress={() => setShowTransactionsModal(false)}
+      >
+        <Text style={styles.closeModalButtonText}>Close</Text>
+      </TouchableOpacity>
+    </View>
+
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.modalListContent}
+    >
+      {filteredTransactions.map((item) => (
+        <TouchableOpacity
+          key={`modal-tx-${item.id}`}
+          style={styles.transactionCard}
+          onPress={() => {
+            setShowTransactionsModal(false);
+            handleTransactionPress(item);
+          }}
+          activeOpacity={0.75}
+        >
+          <View style={styles.transactionLeft}>
+            <Text style={styles.transactionIcon}>
+              {getCategoryIcon(item.category)}
+            </Text>
+            <View>
+              <Text style={styles.transactionName}>{item.name}</Text>
+              <Text style={styles.transactionCategory}>
+                {item.category} • {item.date}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.transactionRight}>
+            <Text
+              style={
+                item.type === "Income"
+                  ? styles.incomeText
+                  : styles.expenseText
+              }
+            >
+              {item.type === "Income" ? "+" : "-"}₱
+              {item.amount.toLocaleString()}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  </View>
+</Modal>
+
+{/* ALL LOANS SCROLLABLE MODAL FORM */}
+<Modal
+  visible={showLoansModal}
+  animationType="slide"
+  transparent={false}
+  onRequestClose={() => setShowLoansModal(false)}
+>
+  <View style={styles.fullModalContainer}>
+    <View style={styles.fullModalHeader}>
+      <Text style={styles.fullModalTitle}>All Active Loans</Text>
+      <TouchableOpacity
+        style={styles.closeModalButton}
+        onPress={() => setShowLoansModal(false)}
+      >
+        <Text style={styles.closeModalButtonText}>Close</Text>
+      </TouchableOpacity>
+    </View>
+
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.modalListContent}
+    >
+      {loans.map((item, index) => (
+        <TouchableOpacity
+          key={`modal-loan-${item.id || index}`}
+          style={styles.transactionCard}
+          onPress={() => {
+            setShowLoansModal(false);
+            handleLoanPress(item);
+          }}
+          activeOpacity={0.75}
+        >
+          <View style={styles.transactionLeft}>
+            <Text style={styles.transactionIcon}>🏦</Text>
+            <View>
+              <Text style={styles.transactionName}>
+                {item.title} •{" "}
+                {item.startDate ? item.startDate.split("T")[0] : ""}
+              </Text>
+              <Text style={styles.transactionCategory}>
+                Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.transactionRight}>
+            <Text style={styles.LoanexpenseText}>
+              ₱{(item.totalAmount ?? 0).toLocaleString()}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  </View>
+</Modal>
 
 {/* LOAN ACTIONS MODAL */}
 <Modal
@@ -1192,9 +1336,7 @@ const handleDeleteSelectedLoan = async () => {
 >
   <View style={styles.actionModalOverlay}>
     <View style={styles.actionModalContent}>
-      <Text style={styles.actionModalTitle}>
-        {selectedLoan?.title}
-      </Text>
+      <Text style={styles.actionModalTitle}>{selectedLoan?.title}</Text>
       <Text style={styles.actionModalSubtitle}>
         Total Amount • ₱{(selectedLoan?.totalAmount ?? 0).toLocaleString()}
       </Text>
@@ -1204,9 +1346,7 @@ const handleDeleteSelectedLoan = async () => {
         style={styles.actionModalDeleteButton}
         onPress={handleDeleteSelectedLoan}
       >
-        <Text style={styles.actionModalDeleteText}>
-          Delete loan
-        </Text>
+        <Text style={styles.actionModalDeleteText}>Delete loan</Text>
       </TouchableOpacity>
 
       {/* CANCEL BUTTON */}
@@ -1219,7 +1359,6 @@ const handleDeleteSelectedLoan = async () => {
     </View>
   </View>
 </Modal>
-
       </ScrollView>
 
       <Modal
@@ -1819,5 +1958,64 @@ const createStyles = (isDarkMode: boolean) => {
       color: "#ffffff",
       fontWeight: "600",
     },
+
+    cardContainer: {
+  backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
+  borderRadius: 18,
+  padding: 16,
+  borderWidth: 1,
+  borderColor: isDarkMode ? '#334155' : '#cbd5e1',
+  marginBottom: 20,
+},
+seeMoreButton: {
+  width: '100%',
+  paddingVertical: 14,
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginTop: 10,
+  backgroundColor: 'transparent',
+  borderTopWidth: 1,
+  borderTopColor: isDarkMode ? '#334155' : '#e2e8f0',
+  zIndex: 10,
+},
+seeMoreText: {
+  fontSize: 14,
+  fontWeight: 'bold',
+  color: '#01040A', // Ensure high-contrast blue color
+},
+fullModalContainer: {
+  flex: 1,
+  backgroundColor: isDarkMode ? "#0f172a" : "#f8fafc",
+  paddingTop: 50,
+  paddingHorizontal: 20,
+},
+fullModalHeader: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: 20,
+  paddingBottom: 12,
+  borderBottomWidth: 1,
+  borderBottomColor: isDarkMode ? "#334155" : "#cbd5e1",
+},
+fullModalTitle: {
+  fontSize: 22,
+  fontWeight: "bold",
+  color: isDarkMode ? "#f8fafc" : "#0f172a",
+},
+closeModalButton: {
+  paddingVertical: 6,
+  paddingHorizontal: 14,
+  backgroundColor: "#1e3a8a",
+  borderRadius: 8,
+},
+closeModalButtonText: {
+  color: "#ffffff",
+  fontWeight: "600",
+  fontSize: 14,
+},
+modalListContent: {
+  paddingBottom: 40,
+},
   });
 };

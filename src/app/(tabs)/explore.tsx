@@ -4,7 +4,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
-import { clearAllDataAndDatabase } from "../../database";
+import { clearAllDataAndDatabase, clearCardsFromDB } from "../../database";
 
 import {
   addDoc,
@@ -790,7 +790,30 @@ const deleteSelectedCard = async () => {
       </View>
     );
   }
-
+  
+  const handleClearCards = () => {
+  Alert.alert(
+    "Clear All Cards",
+    "Are you sure you want to remove all saved cards?",
+    [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear All",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await clearCardsFromDB();
+            setCards([]); // Update UI state
+            Alert.alert("Success", "All cards have been removed.");
+          } catch (error) {
+            Alert.alert("Error", "Failed to clear cards.");
+          }
+        },
+      },
+    ]
+  );
+};
+  
   return (
     <SafeAreaView
       style={styles.container}
@@ -1036,57 +1059,59 @@ const deleteSelectedCard = async () => {
           </TouchableOpacity>
         </View>
 
-        {/* ACCOUNTS OVERVIEW */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Accounts & Cards</Text>
-          {accounts.length > 0 || cards.length > 0 ? (
-            accounts
-              .map((acc) => (
-                <TouchableOpacity key={acc.id} style={styles.accountCard}>
-                  <View style={styles.accountCardHeader}>
-                    <Text style={styles.accountCardName}>{acc.name}</Text>
-                    <Text style={styles.accountCardType}>{acc.type}</Text>
-                  </View>
-                  <Text style={styles.accountBalance}>
-                    ₱
-                    {acc.balance.toLocaleString("en-US", {
-                      minimumFractionDigits: 2,
-                    })}
-                  </Text>
-                </TouchableOpacity>
-              ))
-              .concat(
-                cards.map((card) => (
-                  <TouchableOpacity
-                    key={card.id}
-                    style={styles.accountCard}
-                    onPress={() => setSelectedCard(card)}
-                    activeOpacity={0.75}
-                    accessibilityLabel={`Open actions for ${card.name}`}
-                  >
-                    <View style={styles.accountCardHeader}>
-                      <Text style={styles.accountCardName}>{card.name}</Text>
-                      <Text style={styles.accountCardType}>
-                        {card.type} card
-                      </Text>
-                    </View>
-                    <Text style={styles.accountBalance}>
-                      •••• {card.lastFour}
-                    </Text>
-                    <Text style={styles.accountCardType}>
-                      Expires {card.expiry}
-                    </Text>
-                  </TouchableOpacity>
-                )),
-              )
-          ) : (
-            <View style={styles.accountCard}>
-              <Text style={styles.accountCardName}>
-                No linked accounts found.
-              </Text>
-            </View>
-          )}
-        </View>
+       {/* ACCOUNTS & CARDS OVERVIEW */}
+<View style={styles.sectionContainer}>
+  <View style={styles.sectionHeader}>
+    <Text style={styles.sectionTitle}>Accounts & Cards</Text>
+    <TouchableOpacity onPress={handleClearCards}>
+      <Text style={styles.sectionHeaderAction}>Clear Cards</Text>
+    </TouchableOpacity>
+  </View>
+
+  {accounts.length > 0 || cards.length > 0 ? (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.horizontalScrollContent}
+    >
+      {accounts.map((acc) => (
+        <TouchableOpacity key={`account-${acc.id}`} style={styles.accountCard}>
+          <View style={styles.accountCardHeader}>
+            <Text style={styles.accountCardName}>{acc.name}</Text>
+            <Text style={styles.accountCardType}>{acc.type}</Text>
+          </View>
+          <Text style={styles.accountBalance}>
+            ₱
+            {acc.balance.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+            })}
+          </Text>
+        </TouchableOpacity>
+      ))}
+
+      {cards.map((card) => (
+        <TouchableOpacity
+          key={`card-${card.id}`}
+          style={styles.accountCard}
+          onPress={() => setSelectedCard(card)}
+          activeOpacity={0.75}
+          accessibilityLabel={`Open actions for ${card.name}`}
+        >
+          <View style={styles.accountCardHeader}>
+            <Text style={styles.accountCardName}>{card.name}</Text>
+            <Text style={styles.accountCardType}>{card.type} card</Text>
+          </View>
+          <Text style={styles.accountBalance}>•••• {card.lastFour}</Text>
+          <Text style={styles.accountCardType}>Expires {card.expiry}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  ) : (
+    <View style={styles.accountCard}>
+      <Text style={styles.accountCardName}>No active accounts or cards found.</Text>
+    </View>
+  )}
+</View>
 
         {/* PREFERENCES & SECURITY */}
         <View style={styles.sectionContainer}>
@@ -1545,6 +1570,23 @@ const createStyles = (isDarkMode: boolean) => {
       justifyContent: "center",
       alignItems: "center",
     },
+
+    sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    },
+    sectionHeaderAction: {
+      fontSize: 14,
+      color: "#3b82f6",
+      fontWeight: "600",
+    },
+    horizontalScrollContent: {
+      paddingRight: 16,
+      gap: 15,
+    },
+
     avatarImage: { width: 80, height: 80, borderRadius: 40 },
     avatarText: { color: "#ffffff", fontSize: 28, fontWeight: "bold" },
     editAvatarBadge: {
@@ -2071,4 +2113,5 @@ buttonTextCancel: {
   fontSize: 15,
   color: "#F6F6F7",
 },
+
 });
