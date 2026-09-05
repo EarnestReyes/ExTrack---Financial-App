@@ -5,9 +5,9 @@ import {
   collection,
   doc,
   getDocs,
-  setDoc,
   onSnapshot,
   query,
+  setDoc,
   where,
 } from "firebase/firestore";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -30,19 +30,18 @@ import { LineChart } from "react-native-chart-kit";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
+  deleteLoanFromDB,
   deleteTransactionFromDB,
-  fetchTransactionsFromDB,
-  LoanItem,
   fetchLoansFromDB,
+  fetchTransactionsFromDB,
   getThemePreference,
   getUserProfilePicture,
   initDatabase,
   insertTransactionToDB,
-  setThemePreference,
-  setUserProfilePicture, // <--- Change this
+  LoanItem,
+  setThemePreference, // <--- Change this
   TransactionItem,
-  updateTransactionInDB,
-  deleteLoanFromDB, 
+  updateTransactionInDB
 } from "../../database";
 
 interface GraphDataItem {
@@ -54,11 +53,10 @@ interface GraphDataItem {
 const { width, height } = Dimensions.get("window");
 
 export default function HomeScreen() {
-
   const [showTransactionsModal, setShowTransactionsModal] = useState(false);
   const [showLoansModal, setShowLoansModal] = useState(false);
   const INITIAL_COUNT = 3;
-  
+
   const router = useRouter();
   const systemColorScheme = useColorScheme();
   const [isDarkMode, setIsDarkMode] = useState<boolean>(
@@ -78,185 +76,185 @@ export default function HomeScreen() {
   const [type, setType] = useState<"Income" | "Expense">("Expense");
   const [category, setCategory] = useState("");
 
- // View States
-const [filter, setFilter] = useState("All");
-const [overviewPeriod, setOverviewPeriod] = useState<
-  "Day" | "Week" | "Month" | "Year"
->("Month");
-const [balancePeriod, setBalancePeriod] =
-  useState<typeof overviewPeriod>("Month");
-const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-// 1. Updated state type to LoanItem[] and standard camelCase naming
-const [loans, setLoanList] = useState<LoanItem[]>([]);
-const [selectedLoan, setSelectedLoan] = useState<LoanItem | null>(null);
-const [loan, setLoans] = useState<LoanItem[]>([]);
-const [selectedLoans, setSelectedLoans] = useState<LoanItem | null>(null);
+  // View States
+  const [filter, setFilter] = useState("All");
+  const [overviewPeriod, setOverviewPeriod] = useState<
+    "Day" | "Week" | "Month" | "Year"
+  >("Month");
+  const [balancePeriod, setBalancePeriod] =
+    useState<typeof overviewPeriod>("Month");
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  // 1. Updated state type to LoanItem[] and standard camelCase naming
+  const [loans, setLoanList] = useState<LoanItem[]>([]);
+  const [selectedLoan, setSelectedLoan] = useState<LoanItem | null>(null);
+  const [loan, setLoans] = useState<LoanItem[]>([]);
+  const [selectedLoans, setSelectedLoans] = useState<LoanItem | null>(null);
 
-const [selectedTransaction, setSelectedTransaction] =
-  useState<TransactionItem | null>(null);
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<TransactionItem | null>(null);
 
-const overviewPeriods: Array<typeof overviewPeriod> = [
-  "Day",
-  "Week",
-  "Month",
-  "Year",
-];
+  const overviewPeriods: Array<typeof overviewPeriod> = [
+    "Day",
+    "Week",
+    "Month",
+    "Year",
+  ];
 
-useEffect(() => {
-  initDatabase();
-  loadTransactions();
-  loadLoans(); // 2. Call loadLoans on component mount
+  useEffect(() => {
+    initDatabase();
+    loadTransactions();
+    loadLoans(); // 2. Call loadLoans on component mount
 
-  if (currentUser) {
-    processAutomaticLoanPayments();
-  }
-}, [currentUser]);
-
-useFocusEffect(
-  useCallback(() => {
-    const savedTheme = getThemePreference();
-    if (savedTheme !== null) {
-      setIsDarkMode(savedTheme === "dark");
-    } else {
-      setIsDarkMode(systemColorScheme === "dark");
+    if (currentUser) {
+      processAutomaticLoanPayments();
     }
+  }, [currentUser]);
 
-    // Fetch profile picture from local DB fallback immediately on screen focus
-    const localPic = getUserProfilePicture();
-    if (localPic) {
-      setProfilePic(localPic);
-    }
-
-    // Load loans on focus (loadTransactions removed to prevent overwrite of Firestore real-time listener)
-    loadLoans();
-  }, [systemColorScheme])
-);
-
-// Real-time listener for Firestore Profile Picture / Transactions / Loans
-const formatProfilePicUri = (rawPic: string | null): string | null => {
-  if (!rawPic) return null;
-  const trimmed = rawPic.trim();
-  if (
-    trimmed.startsWith("http://") ||
-    trimmed.startsWith("https://") ||
-    trimmed.startsWith("file://") ||
-    trimmed.startsWith("data:image/")
-  ) {
-    return trimmed;
-  }
-  return `data:image/jpeg;base64,${trimmed}`;
-};
-
-// ==========================================
-// Real-time Firestore Listeners
-// ==========================================
-useEffect(() => {
-  if (!currentUser) return;
-
-  const userPath = `users/${currentUser.uid}`;
-  const userDocRef = doc(db, "users", currentUser.uid);
-
-  // 1. Real-time Firestore Listener for User Profile Updates
-  const unsubscribeUserDoc = onSnapshot(
-    userDocRef,
-    (docSnap) => {
-      if (docSnap.exists()) {
-        const userData = docSnap.data();
-        const photoURL = userData?.photoURL || userData?.profilePic;
-        if (photoURL) {
-          const formattedPic = formatProfilePicUri(photoURL);
-          setProfilePic(formattedPic);
-        }
+  useFocusEffect(
+    useCallback(() => {
+      const savedTheme = getThemePreference();
+      if (savedTheme !== null) {
+        setIsDarkMode(savedTheme === "dark");
+      } else {
+        setIsDarkMode(systemColorScheme === "dark");
       }
-    },
-    (error) => {
-      console.error("Error listening to user profile:", error);
-    }
+
+      // Fetch profile picture from local DB fallback immediately on screen focus
+      const localPic = getUserProfilePicture();
+      if (localPic) {
+        setProfilePic(localPic);
+      }
+
+      // Load loans on focus (loadTransactions removed to prevent overwrite of Firestore real-time listener)
+      loadLoans();
+    }, [systemColorScheme]),
   );
 
-  // 2. Real-time Listener for Transactions
-  const transactionsRef = collection(db, userPath, "transactions");
-const unsubscribeTransactions = onSnapshot(
-  transactionsRef,
-  (snapshot) => {
-    const remoteData: TransactionItem[] = snapshot.docs.map((docItem) => {
-      const data = docItem.data();
-      return {
-        id: data.id,
-        firestoreId: docItem.id,
-        name: data.name || "",
-        amount: Number(data.amount) || 0,
-        type: data.type || "",
-        category: data.category || "",
-        date: data.date || "",
-        time: data.time || "",
-        userId: currentUser.uid,
-      };
-    });
-
-    remoteData.sort((a, b) => {
-      const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime();
-      const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime();
-      return dateB - dateA;
-    });
-
-    // Update React state directly with remote data
-    setTransactions(remoteData);
-  },
-  (error) => {
-    console.error("Error listening to transactions:", error);
-  }
-);
-
-  // 3. Real-time Listener for Loans
-  const loansRef = collection(db, userPath, "loans");
-  const unsubscribeLoans = onSnapshot(
-    loansRef,
-    (snapshot) => {
-      const remoteLoans: LoanItem[] = snapshot.docs.map((docItem) => {
-        const data = docItem.data();
-        return {
-          id: data.id,
-          firestoreId: docItem.id,
-          title: data.title || "",
-          totalAmount: Number(data.totalAmount) || 0,
-          monthlyPayment: Number(data.monthlyPayment) || 0,
-          annualExpense: Number(data.annualExpense) || 0,
-          durationMonths: Number(data.durationMonths) || 0,
-          startDate: data.startDate || "",
-          endDate: data.endDate || "",
-          createdAt: data.createdAt || "",
-        };
-      });
-
-      setLoanList(remoteLoans);
-    },
-    (error) => {
-      console.error("Error listening to loans:", error);
+  // Real-time listener for Firestore Profile Picture / Transactions / Loans
+  const formatProfilePicUri = (rawPic: string | null): string | null => {
+    if (!rawPic) return null;
+    const trimmed = rawPic.trim();
+    if (
+      trimmed.startsWith("http://") ||
+      trimmed.startsWith("https://") ||
+      trimmed.startsWith("file://") ||
+      trimmed.startsWith("data:image/")
+    ) {
+      return trimmed;
     }
-  );
-
-  return () => {
-    unsubscribeUserDoc();
-    unsubscribeTransactions();
-    unsubscribeLoans();
+    return `data:image/jpeg;base64,${trimmed}`;
   };
-}, [currentUser]);
 
-const toggleDarkMode = (value: boolean) => {
-  setIsDarkMode(value);
-  setThemePreference(value ? "dark" : "light");
-};
+  // ==========================================
+  // Real-time Firestore Listeners
+  // ==========================================
+  useEffect(() => {
+    if (!currentUser) return;
 
-const loadTransactions = () => {
-  const dbData = fetchTransactionsFromDB();
-  setTransactions(dbData);
-};
+    const userPath = `users/${currentUser.uid}`;
+    const userDocRef = doc(db, "users", currentUser.uid);
 
-const loadLoans = () => {
-  const dbData = fetchLoansFromDB();
-  setLoans(dbData);
-};
+    // 1. Real-time Firestore Listener for User Profile Updates
+    const unsubscribeUserDoc = onSnapshot(
+      userDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const userData = docSnap.data();
+          const photoURL = userData?.photoURL || userData?.profilePic;
+          if (photoURL) {
+            const formattedPic = formatProfilePicUri(photoURL);
+            setProfilePic(formattedPic);
+          }
+        }
+      },
+      (error) => {
+        console.error("Error listening to user profile:", error);
+      },
+    );
+
+    // 2. Real-time Listener for Transactions
+    const transactionsRef = collection(db, userPath, "transactions");
+    const unsubscribeTransactions = onSnapshot(
+      transactionsRef,
+      (snapshot) => {
+        const remoteData: TransactionItem[] = snapshot.docs.map((docItem) => {
+          const data = docItem.data();
+          return {
+            id: data.id,
+            firestoreId: docItem.id,
+            name: data.name || "",
+            amount: Number(data.amount) || 0,
+            type: data.type || "",
+            category: data.category || "",
+            date: data.date || "",
+            time: data.time || "",
+            userId: currentUser.uid,
+          };
+        });
+
+        remoteData.sort((a, b) => {
+          const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime();
+          const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime();
+          return dateB - dateA;
+        });
+
+        // Update React state directly with remote data
+        setTransactions(remoteData);
+      },
+      (error) => {
+        console.error("Error listening to transactions:", error);
+      },
+    );
+
+    // 3. Real-time Listener for Loans
+    const loansRef = collection(db, userPath, "loans");
+    const unsubscribeLoans = onSnapshot(
+      loansRef,
+      (snapshot) => {
+        const remoteLoans: LoanItem[] = snapshot.docs.map((docItem) => {
+          const data = docItem.data();
+          return {
+            id: data.id,
+            firestoreId: docItem.id,
+            title: data.title || "",
+            totalAmount: Number(data.totalAmount) || 0,
+            monthlyPayment: Number(data.monthlyPayment) || 0,
+            annualExpense: Number(data.annualExpense) || 0,
+            durationMonths: Number(data.durationMonths) || 0,
+            startDate: data.startDate || "",
+            endDate: data.endDate || "",
+            createdAt: data.createdAt || "",
+          };
+        });
+
+        setLoanList(remoteLoans);
+      },
+      (error) => {
+        console.error("Error listening to loans:", error);
+      },
+    );
+
+    return () => {
+      unsubscribeUserDoc();
+      unsubscribeTransactions();
+      unsubscribeLoans();
+    };
+  }, [currentUser]);
+
+  const toggleDarkMode = (value: boolean) => {
+    setIsDarkMode(value);
+    setThemePreference(value ? "dark" : "light");
+  };
+
+  const loadTransactions = () => {
+    const dbData = fetchTransactionsFromDB();
+    setTransactions(dbData);
+  };
+
+  const loadLoans = () => {
+    const dbData = fetchLoansFromDB();
+    setLoans(dbData);
+  };
 
   const formatAmountInput = (value: string) => {
     const hasPesoPrefix = value.includes("₱");
@@ -283,56 +281,58 @@ const loadLoans = () => {
   };
 
   const handleSaveTransaction = async () => {
-  if (!name.trim() || !amount.trim() || !category) {
-    Alert.alert("Missing Fields", "Please fill out all fields.");
-    return;
-  }
-
-    const numericAmount = parseFloat(amount.replace(/[₱,]/g, ""));
-  if (isNaN(numericAmount) || numericAmount <= 0) {
-    Alert.alert("Invalid Amount", "Please enter a valid amount.");
-    return;
-  }
-
-    const today = new Date();
-  const formattedDate = today.toISOString().split("T")[0];
-  const formattedTime = today.toTimeString().split(" ")[0].substring(0, 5);
-  const existingTransaction = transactions.find(
-    (transaction) => transaction.id === editingTransactionId
-  );
-
-  const transaction = {
-    id: editingTransactionId,
-    firestoreId: existingTransaction?.firestoreId, // Pass the Firestore Document ID
-    name,
-    amount: numericAmount,
-    type,
-    category,
-    date: existingTransaction?.date ?? formattedDate,
-    time: existingTransaction?.time ?? formattedTime,
-    userId: currentUser?.uid,
-  } as TransactionItem;
-
-  try {
-    if (editingTransactionId) {
-      await updateTransactionInDB(transaction);
-    } else {
-      await insertTransactionToDB(transaction);
+    if (!name.trim() || !amount.trim() || !category) {
+      Alert.alert("Missing Fields", "Please fill out all fields.");
+      return;
     }
 
-    setName("");
-    setAmount("");
-    setCategory("");
-    setEditingTransactionId(undefined);
-    setShowForm(false);
-  } catch (error) {
-    console.error("Error saving transaction:", error);
-    Alert.alert("Error", "Failed to save transaction.");
-  }
-};
+    const numericAmount = parseFloat(amount.replace(/[₱,]/g, ""));
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      Alert.alert("Invalid Amount", "Please enter a valid amount.");
+      return;
+    }
 
-    const openEditTransaction = (transaction: TransactionItem) => {
-    setEditingTransactionId(transaction.id ? Number(transaction.id) : undefined);
+    const today = new Date();
+    const formattedDate = today.toISOString().split("T")[0];
+    const formattedTime = today.toTimeString().split(" ")[0].substring(0, 5);
+    const existingTransaction = transactions.find(
+      (transaction) => transaction.id === editingTransactionId,
+    );
+
+    const transaction = {
+      id: editingTransactionId,
+      firestoreId: existingTransaction?.firestoreId, // Pass the Firestore Document ID
+      name,
+      amount: numericAmount,
+      type,
+      category,
+      date: existingTransaction?.date ?? formattedDate,
+      time: existingTransaction?.time ?? formattedTime,
+      userId: currentUser?.uid,
+    } as TransactionItem;
+
+    try {
+      if (editingTransactionId) {
+        await updateTransactionInDB(transaction);
+      } else {
+        await insertTransactionToDB(transaction);
+      }
+
+      setName("");
+      setAmount("");
+      setCategory("");
+      setEditingTransactionId(undefined);
+      setShowForm(false);
+    } catch (error) {
+      console.error("Error saving transaction:", error);
+      Alert.alert("Error", "Failed to save transaction.");
+    }
+  };
+
+  const openEditTransaction = (transaction: TransactionItem) => {
+    setEditingTransactionId(
+      transaction.id ? Number(transaction.id) : undefined,
+    );
     setName(transaction.name);
     setAmount(formatAmountInput(`₱${transaction.amount}`));
     setType(transaction.type as "Income" | "Expense");
@@ -354,13 +354,13 @@ const loadLoans = () => {
     .reduce((total, t) => total + t.amount, 0);
 
   const totalExpenses = Number(
-  transactions
-    .filter((t) => t.type === "Expense")
-    .reduce((total, t) => total + t.amount, 0)
-    .toFixed(2)
-);
+    transactions
+      .filter((t) => t.type === "Expense")
+      .reduce((total, t) => total + t.amount, 0)
+      .toFixed(2),
+  );
 
-const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
+  const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
 
   // Chart Data Processing
   const today = new Date();
@@ -447,17 +447,17 @@ const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
   if (balancePeriod === "Month") balanceStartDate.setDate(1);
   if (balancePeriod === "Year") balanceStartDate.setMonth(0, 1);
 
-      const balanceTransactions = [...transactions].sort((first, second) => {
-      const firstDate = `${first.date} ${first.time}`;
-      const secondDate = `${second.date} ${second.time}`;
-      
-      const dateComparison = firstDate.localeCompare(secondDate);
-      if (dateComparison !== 0) return dateComparison;
+  const balanceTransactions = [...transactions].sort((first, second) => {
+    const firstDate = `${first.date} ${first.time}`;
+    const secondDate = `${second.date} ${second.time}`;
 
-      const firstId = Number(first.id) || 0;
-      const secondId = Number(second.id) || 0;
-      return firstId - secondId;
-    });
+    const dateComparison = firstDate.localeCompare(secondDate);
+    if (dateComparison !== 0) return dateComparison;
+
+    const firstId = Number(first.id) || 0;
+    const secondId = Number(second.id) || 0;
+    return firstId - secondId;
+  });
   const startingBalance = balanceTransactions
     .filter((transaction) => {
       const [year, month, day] = transaction.date.split("-").map(Number);
@@ -559,37 +559,36 @@ const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
     setSelectedTransaction(transaction);
   };
 
-const handleLoanPress = (loanItem: LoanItem) => {
-  setSelectedLoan(loanItem);
-};
-
+  const handleLoanPress = (loanItem: LoanItem) => {
+    setSelectedLoan(loanItem);
+  };
 
   const closeTransactionActions = () => {
     setSelectedTransaction(null);
   };
 
- const handleDeleteSelectedTransaction = async () => {
-  if (!selectedTransaction?.id) return;
+  const handleDeleteSelectedTransaction = async () => {
+    if (!selectedTransaction?.id) return;
 
-  try {
-    // Pass local id, Firestore transaction document ID, and loanId
-    await deleteTransactionFromDB(
-      selectedTransaction.id,
-      selectedTransaction.firestoreId,
-      selectedTransaction.loanId
-    );
+    try {
+      // Pass local id, Firestore transaction document ID, and loanId
+      await deleteTransactionFromDB(
+        selectedTransaction.id,
+        selectedTransaction.firestoreId,
+        selectedTransaction.loanId,
+      );
 
-    // Update local React state to reflect immediate deletion
-    setTransactions((current) =>
-      current.filter((t) => t.id !== selectedTransaction.id)
-    );
+      // Update local React state to reflect immediate deletion
+      setTransactions((current) =>
+        current.filter((t) => t.id !== selectedTransaction.id),
+      );
 
-    closeTransactionActions();
-  } catch (error) {
-    console.error("Failed to delete transaction:", error);
-    Alert.alert("Error", "Failed to delete transaction from all records.");
-  }
-};
+      closeTransactionActions();
+    } catch (error) {
+      console.error("Failed to delete transaction:", error);
+      Alert.alert("Error", "Failed to delete transaction from all records.");
+    }
+  };
 
   // Draggable FAB with Gesture Distance Check
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -645,216 +644,209 @@ const handleLoanPress = (loanItem: LoanItem) => {
   const styles = createStyles(isDarkMode);
 
   const processAutomaticLoanPayments = async () => {
-  if (!currentUser) return;
+    if (!currentUser) return;
 
-  try {
-    const loansRef = collection(
-      db,
-      "users",
-      currentUser.uid,
-      "loans"
-    );
+    try {
+      const loansRef = collection(db, "users", currentUser.uid, "loans");
 
-    const loansSnapshot = await getDocs(loansRef);
+      const loansSnapshot = await getDocs(loansRef);
 
-    const transactionsRef = collection(
-      db,
-      "users",
-      currentUser.uid,
-      "transactions"
-    );
-
-    const now = new Date();
-
-    const todayYear = now.getFullYear();
-    const todayMonth = now.getMonth();
-    const todayDay = now.getDate();
-
-    const todayString = [
-      todayYear,
-      String(todayMonth + 1).padStart(2, "0"),
-      String(todayDay).padStart(2, "0"),
-    ].join("-");
-
-    console.log(`Checking loans for ${todayString}`);
-
-    for (const loanDoc of loansSnapshot.docs) {
-      const loan = loanDoc.data();
-
-      const monthlyPayment = Number(loan.monthlyPayment);
-      const durationMonths = Number(loan.durationMonths);
-
-      if (
-        !loan.startDate ||
-        !monthlyPayment ||
-        monthlyPayment <= 0 ||
-        !durationMonths ||
-        durationMonths <= 0
-      ) {
-        continue;
-      }
-
-      const startDate = new Date(loan.startDate);
-
-      if (isNaN(startDate.getTime())) {
-        console.log(`Invalid start date for loan ${loanDoc.id}`);
-        continue;
-      }
-
-      const loanStartYear = startDate.getFullYear();
-      const loanStartMonth = startDate.getMonth();
-      const paymentDay = startDate.getDate();
-
-      /*
-       * IMPORTANT:
-       * Only create a payment when TODAY is the payment day.
-       *
-       * Example:
-       * Loan date = September 4
-       *
-       * September 4  -> payment
-       * September 5  -> nothing
-       * September 20 -> nothing
-       * October 4     -> payment
-       * November 4    -> payment
-       */
-
-      if (todayDay !== paymentDay) {
-        continue;
-      }
-
-      // Calculate which month/payment this is
-      const monthsSinceStart =
-        (todayYear - loanStartYear) * 12 +
-        (todayMonth - loanStartMonth);
-
-      const paymentNumber = monthsSinceStart + 1;
-
-      // Loan hasn't started yet
-      if (paymentNumber <= 0) {
-        continue;
-      }
-
-      // Loan is already finished
-      if (paymentNumber > durationMonths) {
-        console.log(
-          `${loan.title}: All loan payments completed.`
-        );
-        continue;
-      }
-
-      /*
-       * CHECK IF THIS MONTH'S PAYMENT ALREADY EXISTS
-       */
-      const paymentQuery = query(
-        transactionsRef,
-        where("loanId", "==", loanDoc.id),
-        where("loanPaymentDate", "==", todayString)
+      const transactionsRef = collection(
+        db,
+        "users",
+        currentUser.uid,
+        "transactions",
       );
 
-      const existingPaymentSnapshot =
-        await getDocs(paymentQuery);
+      const now = new Date();
 
-      // Prevent duplicate payment
-      if (!existingPaymentSnapshot.empty) {
-        console.log(
-          `${loan.title}: Payment #${paymentNumber} already recorded.`
+      const todayYear = now.getFullYear();
+      const todayMonth = now.getMonth();
+      const todayDay = now.getDate();
+
+      const todayString = [
+        todayYear,
+        String(todayMonth + 1).padStart(2, "0"),
+        String(todayDay).padStart(2, "0"),
+      ].join("-");
+
+      console.log(`Checking loans for ${todayString}`);
+
+      for (const loanDoc of loansSnapshot.docs) {
+        const loan = loanDoc.data();
+
+        const monthlyPayment = Number(loan.monthlyPayment);
+        const durationMonths = Number(loan.durationMonths);
+
+        if (
+          !loan.startDate ||
+          !monthlyPayment ||
+          monthlyPayment <= 0 ||
+          !durationMonths ||
+          durationMonths <= 0
+        ) {
+          continue;
+        }
+
+        const startDate = new Date(loan.startDate);
+
+        if (isNaN(startDate.getTime())) {
+          console.log(`Invalid start date for loan ${loanDoc.id}`);
+          continue;
+        }
+
+        const loanStartYear = startDate.getFullYear();
+        const loanStartMonth = startDate.getMonth();
+        const paymentDay = startDate.getDate();
+
+        /*
+         * IMPORTANT:
+         * Only create a payment when TODAY is the payment day.
+         *
+         * Example:
+         * Loan date = September 4
+         *
+         * September 4  -> payment
+         * September 5  -> nothing
+         * September 20 -> nothing
+         * October 4     -> payment
+         * November 4    -> payment
+         */
+
+        if (todayDay !== paymentDay) {
+          continue;
+        }
+
+        // Calculate which month/payment this is
+        const monthsSinceStart =
+          (todayYear - loanStartYear) * 12 + (todayMonth - loanStartMonth);
+
+        const paymentNumber = monthsSinceStart + 1;
+
+        // Loan hasn't started yet
+        if (paymentNumber <= 0) {
+          continue;
+        }
+
+        // Loan is already finished
+        if (paymentNumber > durationMonths) {
+          console.log(`${loan.title}: All loan payments completed.`);
+          continue;
+        }
+
+        /*
+         * CHECK IF THIS MONTH'S PAYMENT ALREADY EXISTS
+         */
+        const paymentQuery = query(
+          transactionsRef,
+          where("loanId", "==", loanDoc.id),
+          where("loanPaymentDate", "==", todayString),
         );
-        continue;
+
+        const existingPaymentSnapshot = await getDocs(paymentQuery);
+
+        // Prevent duplicate payment
+        if (!existingPaymentSnapshot.empty) {
+          console.log(
+            `${loan.title}: Payment #${paymentNumber} already recorded.`,
+          );
+          continue;
+        }
+
+        /*
+         * CREATE ONLY ONE PAYMENT
+         */
+        const transactionRef = doc(transactionsRef);
+
+        await setDoc(transactionRef, {
+          id: Date.now(),
+          name: `${loan.title} Loan Payment`,
+          amount: monthlyPayment,
+          type: "Expense",
+          category: "Bills",
+          date: todayString,
+          time: now.toTimeString().slice(0, 5),
+
+          // Loan information
+          loanId: loanDoc.id,
+          loanPaymentDate: todayString,
+          loanPaymentNumber: paymentNumber,
+
+          // Mark as automatic
+          automatic: true,
+
+          createdAt: new Date().toISOString(),
+        });
+
+        console.log(
+          `Created payment #${paymentNumber} for ${loan.title}: ₱${monthlyPayment}`,
+        );
       }
 
-      /*
-       * CREATE ONLY ONE PAYMENT
-       */
-      const transactionRef = doc(transactionsRef);
+      console.log("Loan payment check completed.");
+    } catch (error) {
+      console.error("Error processing automatic loan payments:", error);
+    }
+  };
 
-      await setDoc(transactionRef, {
-        id: Date.now(),
-        name: `${loan.title} Loan Payment`,
-        amount: monthlyPayment,
-        type: "Expense",
-        category: "Bills",
-        date: todayString,
-        time: now.toTimeString().slice(0, 5),
+  const closeLoanActions = () => {
+    setSelectedLoan(null);
+  };
 
-        // Loan information
-        loanId: loanDoc.id,
-        loanPaymentDate: todayString,
-        loanPaymentNumber: paymentNumber,
+  const handleDeleteSelectedLoan = async () => {
+    if (!selectedLoan) return;
 
-        // Mark as automatic
-        automatic: true,
+    const numericId = selectedLoan.id ? Number(selectedLoan.id) : undefined;
+    const firestoreId = selectedLoan.firestoreId;
 
-        createdAt: new Date().toISOString(),
-      });
+    // 1. Check if at least ONE valid identifier exists
+    const hasValidNumericId =
+      numericId !== undefined && !isNaN(numericId) && numericId > 0;
+    const hasValidFirestoreId = Boolean(firestoreId);
 
-      console.log(
-        `Created payment #${paymentNumber} for ${loan.title}: ₱${monthlyPayment}`
+    if (!hasValidNumericId && !hasValidFirestoreId) {
+      Alert.alert("Error", "Invalid Loan ID. Cannot delete this record.");
+      console.error(
+        "Delete failed: No valid loan ID provided ->",
+        selectedLoan,
       );
+      return;
     }
 
-    console.log("Loan payment check completed.");
-  } catch (error) {
-    console.error(
-      "Error processing automatic loan payments:",
-      error
-    );
-  }
-};
+    // 2. Prompt confirmation and execute deletion
+    Alert.alert(
+      "Delete Loan",
+      "Are you sure you want to delete this active loan?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Call updated database function passing both potential keys
+              await deleteLoanFromDB(numericId, firestoreId);
 
-const closeLoanActions = () => {
-  setSelectedLoan(null);
-};
+              // Update UI local state immediately
+              setLoans((current: LoanItem[]) =>
+                current.filter((l: LoanItem) => {
+                  if (firestoreId && l.firestoreId === firestoreId)
+                    return false;
+                  if (numericId && l.id === numericId) return false;
+                  return true;
+                }),
+              );
 
-const handleDeleteSelectedLoan = async () => {
-  if (!selectedLoan) return;
-
-  const numericId = selectedLoan.id ? Number(selectedLoan.id) : undefined;
-  const firestoreId = selectedLoan.firestoreId;
-
-  // 1. Check if at least ONE valid identifier exists
-  const hasValidNumericId = numericId !== undefined && !isNaN(numericId) && numericId > 0;
-  const hasValidFirestoreId = Boolean(firestoreId);
-
-  if (!hasValidNumericId && !hasValidFirestoreId) {
-    Alert.alert("Error", "Invalid Loan ID. Cannot delete this record.");
-    console.error("Delete failed: No valid loan ID provided ->", selectedLoan);
-    return;
-  }
-
-  // 2. Prompt confirmation and execute deletion
-  Alert.alert(
-    "Delete Loan",
-    "Are you sure you want to delete this active loan?",
-    [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            // Call updated database function passing both potential keys
-            await deleteLoanFromDB(numericId, firestoreId);
-
-            // Update UI local state immediately
-            setLoans((current: LoanItem[]) =>
-              current.filter((l: LoanItem) => {
-                if (firestoreId && l.firestoreId === firestoreId) return false;
-                if (numericId && l.id === numericId) return false;
-                return true;
-              })
-            );
-
-            closeLoanActions();
-          } catch (error) {
-            console.error("Failed to delete loan:", error);
-            Alert.alert("Error", "Failed to delete loan from records.");
-          }
+              closeLoanActions();
+            } catch (error) {
+              console.error("Failed to delete loan:", error);
+              Alert.alert("Error", "Failed to delete loan from records.");
+            }
+          },
         },
-      },
-    ]
-  );
-};
+      ],
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
@@ -1083,282 +1075,283 @@ const handleDeleteSelectedLoan = async () => {
         </View>
 
         {/* RECENT TRANSACTIONS CONTAINER */}
-<View style={styles.cardContainer}>
-  {/* RECENT TRANSACTIONS HEADER */}
-  <View style={styles.sectionHeader}>
-    <Text style={styles.sectionTitle}>Recent Transactions</Text>
-  </View>
-
-  {/* FILTERS */}
-  <View style={styles.filterContainer}>
-    {["All", "Income", "Expense"].map((f) => (
-      <TouchableOpacity
-        key={f}
-        style={[
-          styles.filterChip,
-          filter === f && styles.filterChipActive,
-        ]}
-        onPress={() => setFilter(f)}
-      >
-        <Text
-          style={[
-            styles.filterText,
-            filter === f && styles.filterTextActive,
-          ]}
-        >
-          {f}
-        </Text>
-      </TouchableOpacity>
-    ))}
-  </View>
-
-  {/* LIST TRANSACTIONS */}
-  {filteredTransactions.length > 0 ? (
-    filteredTransactions.slice(0, INITIAL_COUNT).map((item) => (
-      <TouchableOpacity
-        key={item.id}
-        style={styles.transactionCard}
-        onPress={() => handleTransactionPress(item)}
-        activeOpacity={0.75}
-        accessibilityLabel={`Open actions for ${item.name}`}
-      >
-        <View style={styles.transactionLeft}>
-          <Text style={styles.transactionIcon}>
-            {getCategoryIcon(item.category)}
-          </Text>
-          <View>
-            <Text style={styles.transactionName}>{item.name}</Text>
-            <Text style={styles.transactionCategory}>
-              {item.category} • {item.date}
-            </Text>
+        <View style={styles.cardContainer}>
+          {/* RECENT TRANSACTIONS HEADER */}
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
           </View>
-        </View>
-        <View style={styles.transactionRight}>
-          <Text
-            style={
-              item.type === "Income"
-                ? styles.incomeText
-                : styles.expenseText
-            }
-          >
-            {item.type === "Income" ? "+" : "-"}₱
-            {item.amount.toLocaleString()}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    ))
-  ) : (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyText}>No Transactions Found.</Text>
-    </View>
-  )}
 
-  {/* SEE MORE BUTTON (OPENS TRANSACTIONS MODAL) */}
-  {filteredTransactions.length > INITIAL_COUNT && (
-    <TouchableOpacity
-      style={styles.seeMoreButton}
-      onPress={() => setShowTransactionsModal(true)}
-    >
-      <Text style={styles.seeMoreText}>See More</Text>
-    </TouchableOpacity>
-  )}
-</View>
-
-{/* ACTIVE LOANS CONTAINER */}
-{loans && loans.length > 0 && (
-  <View style={styles.cardContainer}>
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>Active Loans</Text>
-    </View>
-
-    {loans.slice(0, INITIAL_COUNT).map((item, index) => (
-      <TouchableOpacity
-        key={item.id || item.firestoreId || `loan-${index}`}
-        style={styles.transactionCard}
-        onPress={() => handleLoanPress(item)}
-        activeOpacity={0.75}
-        accessibilityLabel={`Open actions for ${item.title}`}
-      >
-        <View style={styles.transactionLeft}>
-          <Text style={styles.transactionIcon}>🏦</Text>
-          <View>
-            <Text style={styles.transactionName}>
-              {item.title} •{" "}
-              {item.startDate ? item.startDate.split("T")[0] : ""}
-            </Text>
-            <Text style={styles.transactionCategory}>
-              Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
-            </Text>
+          {/* FILTERS */}
+          <View style={styles.filterContainer}>
+            {["All", "Income", "Expense"].map((f) => (
+              <TouchableOpacity
+                key={f}
+                style={[
+                  styles.filterChip,
+                  filter === f && styles.filterChipActive,
+                ]}
+                onPress={() => setFilter(f)}
+              >
+                <Text
+                  style={[
+                    styles.filterText,
+                    filter === f && styles.filterTextActive,
+                  ]}
+                >
+                  {f}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
-        </View>
-        <View style={styles.transactionRight}>
-          <Text style={styles.LoanexpenseText}>
-            ₱{(item.totalAmount ?? 0).toLocaleString()}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    ))}
 
-    {/* SEE MORE BUTTON (OPENS LOANS MODAL) */}
-    {loans.length > INITIAL_COUNT && (
-      <TouchableOpacity
-        style={styles.seeMoreButton}
-        onPress={() => setShowLoansModal(true)}
-      >
-        <Text style={styles.seeMoreText}>See More</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-)}
-
-{/* ALL TRANSACTIONS SCROLLABLE MODAL FORM */}
-<Modal
-  visible={showTransactionsModal}
-  animationType="slide"
-  transparent={false}
-  onRequestClose={() => setShowTransactionsModal(false)}
->
-  <View style={styles.fullModalContainer}>
-    <View style={styles.fullModalHeader}>
-      <Text style={styles.fullModalTitle}>All Transactions</Text>
-      <TouchableOpacity
-        style={styles.closeModalButton}
-        onPress={() => setShowTransactionsModal(false)}
-      >
-        <Text style={styles.closeModalButtonText}>Close</Text>
-      </TouchableOpacity>
-    </View>
-
-    <ScrollView
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.modalListContent}
-    >
-      {filteredTransactions.map((item) => (
-        <TouchableOpacity
-          key={`modal-tx-${item.id}`}
-          style={styles.transactionCard}
-          onPress={() => {
-            setShowTransactionsModal(false);
-            handleTransactionPress(item);
-          }}
-          activeOpacity={0.75}
-        >
-          <View style={styles.transactionLeft}>
-            <Text style={styles.transactionIcon}>
-              {getCategoryIcon(item.category)}
-            </Text>
-            <View>
-              <Text style={styles.transactionName}>{item.name}</Text>
-              <Text style={styles.transactionCategory}>
-                {item.category} • {item.date}
-              </Text>
+          {/* LIST TRANSACTIONS */}
+          {filteredTransactions.length > 0 ? (
+            filteredTransactions.slice(0, INITIAL_COUNT).map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.transactionCard}
+                onPress={() => handleTransactionPress(item)}
+                activeOpacity={0.75}
+                accessibilityLabel={`Open actions for ${item.name}`}
+              >
+                <View style={styles.transactionLeft}>
+                  <Text style={styles.transactionIcon}>
+                    {getCategoryIcon(item.category)}
+                  </Text>
+                  <View>
+                    <Text style={styles.transactionName}>{item.name}</Text>
+                    <Text style={styles.transactionCategory}>
+                      {item.category} • {item.date}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.transactionRight}>
+                  <Text
+                    style={
+                      item.type === "Income"
+                        ? styles.incomeText
+                        : styles.expenseText
+                    }
+                  >
+                    {item.type === "Income" ? "+" : "-"}₱
+                    {item.amount.toLocaleString()}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No Transactions Found.</Text>
             </View>
-          </View>
-          <View style={styles.transactionRight}>
-            <Text
-              style={
-                item.type === "Income"
-                  ? styles.incomeText
-                  : styles.expenseText
-              }
+          )}
+
+          {/* SEE MORE BUTTON (OPENS TRANSACTIONS MODAL) */}
+          {filteredTransactions.length > INITIAL_COUNT && (
+            <TouchableOpacity
+              style={styles.seeMoreButton}
+              onPress={() => setShowTransactionsModal(true)}
             >
-              {item.type === "Income" ? "+" : "-"}₱
-              {item.amount.toLocaleString()}
-            </Text>
+              <Text style={styles.seeMoreText}>See More</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* ACTIVE LOANS CONTAINER */}
+        {loans && loans.length > 0 && (
+          <View style={styles.cardContainer}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Active Loans</Text>
+            </View>
+
+            {loans.slice(0, INITIAL_COUNT).map((item, index) => (
+              <TouchableOpacity
+                key={item.id || item.firestoreId || `loan-${index}`}
+                style={styles.transactionCard}
+                onPress={() => handleLoanPress(item)}
+                activeOpacity={0.75}
+                accessibilityLabel={`Open actions for ${item.title}`}
+              >
+                <View style={styles.transactionLeft}>
+                  <Text style={styles.transactionIcon}>🏦</Text>
+                  <View>
+                    <Text style={styles.transactionName}>
+                      {item.title} •{" "}
+                      {item.startDate ? item.startDate.split("T")[0] : ""}
+                    </Text>
+                    <Text style={styles.transactionCategory}>
+                      Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.transactionRight}>
+                  <Text style={styles.LoanexpenseText}>
+                    ₱{(item.totalAmount ?? 0).toLocaleString()}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+
+            {/* SEE MORE BUTTON (OPENS LOANS MODAL) */}
+            {loans.length > INITIAL_COUNT && (
+              <TouchableOpacity
+                style={styles.seeMoreButton}
+                onPress={() => setShowLoansModal(true)}
+              >
+                <Text style={styles.seeMoreText}>See More</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  </View>
-</Modal>
+        )}
 
-{/* ALL LOANS SCROLLABLE MODAL FORM */}
-<Modal
-  visible={showLoansModal}
-  animationType="slide"
-  transparent={false}
-  onRequestClose={() => setShowLoansModal(false)}
->
-  <View style={styles.fullModalContainer}>
-    <View style={styles.fullModalHeader}>
-      <Text style={styles.fullModalTitle}>All Active Loans</Text>
-      <TouchableOpacity
-        style={styles.closeModalButton}
-        onPress={() => setShowLoansModal(false)}
-      >
-        <Text style={styles.closeModalButtonText}>Close</Text>
-      </TouchableOpacity>
-    </View>
-
-    <ScrollView
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.modalListContent}
-    >
-      {loans.map((item, index) => (
-        <TouchableOpacity
-          key={`modal-loan-${item.id || index}`}
-          style={styles.transactionCard}
-          onPress={() => {
-            setShowLoansModal(false);
-            handleLoanPress(item);
-          }}
-          activeOpacity={0.75}
+        {/* ALL TRANSACTIONS SCROLLABLE MODAL FORM */}
+        <Modal
+          visible={showTransactionsModal}
+          animationType="slide"
+          transparent={false}
+          onRequestClose={() => setShowTransactionsModal(false)}
         >
-          <View style={styles.transactionLeft}>
-            <Text style={styles.transactionIcon}>🏦</Text>
-            <View>
-              <Text style={styles.transactionName}>
-                {item.title} •{" "}
-                {item.startDate ? item.startDate.split("T")[0] : ""}
+          <View style={styles.fullModalContainer}>
+            <View style={styles.fullModalHeader}>
+              <Text style={styles.fullModalTitle}>All Transactions</Text>
+              <TouchableOpacity
+                style={styles.closeModalButton}
+                onPress={() => setShowTransactionsModal(false)}
+              >
+                <Text style={styles.closeModalButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalListContent}
+            >
+              {filteredTransactions.map((item) => (
+                <TouchableOpacity
+                  key={`modal-tx-${item.id}`}
+                  style={styles.transactionCard}
+                  onPress={() => {
+                    setShowTransactionsModal(false);
+                    handleTransactionPress(item);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <View style={styles.transactionLeft}>
+                    <Text style={styles.transactionIcon}>
+                      {getCategoryIcon(item.category)}
+                    </Text>
+                    <View>
+                      <Text style={styles.transactionName}>{item.name}</Text>
+                      <Text style={styles.transactionCategory}>
+                        {item.category} • {item.date}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.transactionRight}>
+                    <Text
+                      style={
+                        item.type === "Income"
+                          ? styles.incomeText
+                          : styles.expenseText
+                      }
+                    >
+                      {item.type === "Income" ? "+" : "-"}₱
+                      {item.amount.toLocaleString()}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </Modal>
+
+        {/* ALL LOANS SCROLLABLE MODAL FORM */}
+        <Modal
+          visible={showLoansModal}
+          animationType="slide"
+          transparent={false}
+          onRequestClose={() => setShowLoansModal(false)}
+        >
+          <View style={styles.fullModalContainer}>
+            <View style={styles.fullModalHeader}>
+              <Text style={styles.fullModalTitle}>All Active Loans</Text>
+              <TouchableOpacity
+                style={styles.closeModalButton}
+                onPress={() => setShowLoansModal(false)}
+              >
+                <Text style={styles.closeModalButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalListContent}
+            >
+              {loans.map((item, index) => (
+                <TouchableOpacity
+                  key={`modal-loan-${item.id || index}`}
+                  style={styles.transactionCard}
+                  onPress={() => {
+                    setShowLoansModal(false);
+                    handleLoanPress(item);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <View style={styles.transactionLeft}>
+                    <Text style={styles.transactionIcon}>🏦</Text>
+                    <View>
+                      <Text style={styles.transactionName}>
+                        {item.title} •{" "}
+                        {item.startDate ? item.startDate.split("T")[0] : ""}
+                      </Text>
+                      <Text style={styles.transactionCategory}>
+                        Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.transactionRight}>
+                    <Text style={styles.LoanexpenseText}>
+                      ₱{(item.totalAmount ?? 0).toLocaleString()}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </Modal>
+
+        {/* LOAN ACTIONS MODAL */}
+        <Modal
+          visible={selectedLoan !== null}
+          animationType="fade"
+          transparent
+          onRequestClose={closeLoanActions}
+        >
+          <View style={styles.actionModalOverlay}>
+            <View style={styles.actionModalContent}>
+              <Text style={styles.actionModalTitle}>{selectedLoan?.title}</Text>
+              <Text style={styles.actionModalSubtitle}>
+                Total Amount • ₱
+                {(selectedLoan?.totalAmount ?? 0).toLocaleString()}
               </Text>
-              <Text style={styles.transactionCategory}>
-                Monthly: ₱{(item.monthlyPayment ?? 0).toLocaleString()}
-              </Text>
+
+              {/* DELETE BUTTON */}
+              <TouchableOpacity
+                style={styles.actionModalDeleteButton}
+                onPress={handleDeleteSelectedLoan}
+              >
+                <Text style={styles.actionModalDeleteText}>Delete loan</Text>
+              </TouchableOpacity>
+
+              {/* CANCEL BUTTON */}
+              <TouchableOpacity
+                style={styles.actionModalCancelButton}
+                onPress={closeLoanActions}
+              >
+                <Text style={styles.actionModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.transactionRight}>
-            <Text style={styles.LoanexpenseText}>
-              ₱{(item.totalAmount ?? 0).toLocaleString()}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  </View>
-</Modal>
-
-{/* LOAN ACTIONS MODAL */}
-<Modal
-  visible={selectedLoan !== null}
-  animationType="fade"
-  transparent
-  onRequestClose={closeLoanActions}
->
-  <View style={styles.actionModalOverlay}>
-    <View style={styles.actionModalContent}>
-      <Text style={styles.actionModalTitle}>{selectedLoan?.title}</Text>
-      <Text style={styles.actionModalSubtitle}>
-        Total Amount • ₱{(selectedLoan?.totalAmount ?? 0).toLocaleString()}
-      </Text>
-
-      {/* DELETE BUTTON */}
-      <TouchableOpacity
-        style={styles.actionModalDeleteButton}
-        onPress={handleDeleteSelectedLoan}
-      >
-        <Text style={styles.actionModalDeleteText}>Delete loan</Text>
-      </TouchableOpacity>
-
-      {/* CANCEL BUTTON */}
-      <TouchableOpacity
-        style={styles.actionModalCancelButton}
-        onPress={closeLoanActions}
-      >
-        <Text style={styles.actionModalCancelText}>Cancel</Text>
-      </TouchableOpacity>
-    </View>
-  </View>
-</Modal>
+        </Modal>
       </ScrollView>
 
       <Modal
@@ -1527,8 +1520,6 @@ const handleDeleteSelectedLoan = async () => {
     </SafeAreaView>
   );
 }
-
-
 
 const createStyles = (isDarkMode: boolean) => {
   const backgroundColor = isDarkMode ? "#0f172a" : "#f8fafc";
@@ -1960,62 +1951,62 @@ const createStyles = (isDarkMode: boolean) => {
     },
 
     cardContainer: {
-  backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
-  borderRadius: 18,
-  padding: 16,
-  borderWidth: 1,
-  borderColor: isDarkMode ? '#334155' : '#cbd5e1',
-  marginBottom: 20,
-},
-seeMoreButton: {
-  width: '100%',
-  paddingVertical: 14,
-  alignItems: 'center',
-  justifyContent: 'center',
-  marginTop: 10,
-  backgroundColor: 'transparent',
-  borderTopWidth: 1,
-  borderTopColor: isDarkMode ? '#334155' : '#e2e8f0',
-  zIndex: 10,
-},
-seeMoreText: {
-  fontSize: 14,
-  fontWeight: 'bold',
-  color: '#01040A', // Ensure high-contrast blue color
-},
-fullModalContainer: {
-  flex: 1,
-  backgroundColor: isDarkMode ? "#0f172a" : "#f8fafc",
-  paddingTop: 50,
-  paddingHorizontal: 20,
-},
-fullModalHeader: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: 20,
-  paddingBottom: 12,
-  borderBottomWidth: 1,
-  borderBottomColor: isDarkMode ? "#334155" : "#cbd5e1",
-},
-fullModalTitle: {
-  fontSize: 22,
-  fontWeight: "bold",
-  color: isDarkMode ? "#f8fafc" : "#0f172a",
-},
-closeModalButton: {
-  paddingVertical: 6,
-  paddingHorizontal: 14,
-  backgroundColor: "#1e3a8a",
-  borderRadius: 8,
-},
-closeModalButtonText: {
-  color: "#ffffff",
-  fontWeight: "600",
-  fontSize: 14,
-},
-modalListContent: {
-  paddingBottom: 40,
-},
+      backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
+      borderRadius: 18,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: isDarkMode ? "#334155" : "#cbd5e1",
+      marginBottom: 20,
+    },
+    seeMoreButton: {
+      width: "100%",
+      paddingVertical: 14,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 10,
+      backgroundColor: "transparent",
+      borderTopWidth: 1,
+      borderTopColor: isDarkMode ? "#334155" : "#e2e8f0",
+      zIndex: 10,
+    },
+    seeMoreText: {
+      fontSize: 14,
+      fontWeight: "bold",
+      color: isDarkMode ? "#f8fafc" : "#0f172a",
+    },
+    fullModalContainer: {
+      flex: 1,
+      backgroundColor: isDarkMode ? "#0f172a" : "#f8fafc",
+      paddingTop: 50,
+      paddingHorizontal: 20,
+    },
+    fullModalHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 20,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: isDarkMode ? "#334155" : "#cbd5e1",
+    },
+    fullModalTitle: {
+      fontSize: 22,
+      fontWeight: "bold",
+      color: isDarkMode ? "#f8fafc" : "#0f172a",
+    },
+    closeModalButton: {
+      paddingVertical: 6,
+      paddingHorizontal: 14,
+      backgroundColor: "#1e3a8a",
+      borderRadius: 8,
+    },
+    closeModalButtonText: {
+      color: "#ffffff",
+      fontWeight: "600",
+      fontSize: 14,
+    },
+    modalListContent: {
+      paddingBottom: 40,
+    },
   });
 };
