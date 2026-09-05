@@ -41,6 +41,18 @@ export default function RootLayout() {
   const notificationListener = useRef<Notifications.EventSubscription | null>(null);
   const responseListener = useRef<Notifications.EventSubscription | null>(null);
 
+  // Helper function to handle signout and redirection on cancel/failure
+  const handleAuthenticationFailure = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Error during sign out on biometric failure:', error);
+    } finally {
+      setIsLocked(false);
+      router.replace('/');
+    }
+  };
+
   // Helper to trigger biometric prompt
   const authenticateBiometrics = async () => {
     if (isAuthenticating.current) return;
@@ -61,14 +73,15 @@ export default function RootLayout() {
         if (result.success) {
           setIsLocked(false);
         } else {
-          setIsLocked(true);
+          // Triggered when user cancels or biometric fails
+          await handleAuthenticationFailure();
         }
       } else {
         setIsLocked(false);
       }
     } catch (error) {
       console.error('Biometric authentication failed:', error);
-      setIsLocked(true);
+      await handleAuthenticationFailure();
     } finally {
       isAuthenticating.current = false;
     }

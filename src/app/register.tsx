@@ -1,16 +1,20 @@
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    useColorScheme,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useColorScheme,
+  View,
 } from "react-native";
+
+import { getThemePreference, setThemePreference } from "../database";
+import { useCallback } from "react";
+import { useFocusEffect } from "expo-router";
 
 import DateTimePicker, {
     DateTimePickerEvent,
@@ -24,12 +28,41 @@ import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 
 export default function RegisterScreen() {
+
   // ==============================
   // THEME
   // ==============================
-  const colorScheme = useColorScheme();
-  const isDarkMode = colorScheme === "dark";
+  const systemColorScheme = useColorScheme();
+
+  // Initialize state directly from stored preference to prevent layout flickers
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const savedTheme = getThemePreference();
+    if (savedTheme !== null) {
+      return savedTheme === "dark";
+    }
+    return systemColorScheme === "dark";
+  });
+
+  // Re-sync when navigating back to screen
+  useFocusEffect(
+    useCallback(() => {
+      const savedTheme = getThemePreference();
+      if (savedTheme !== null) {
+        setIsDarkMode(savedTheme === "dark");
+      } else {
+        setIsDarkMode(systemColorScheme === "dark");
+      }
+    }, [systemColorScheme])
+  );
+
   const styles = useMemo(() => createStyles(isDarkMode), [isDarkMode]);
+
+  // Toggle handler to update state AND database
+  const handleDarkModeToggle = (value: boolean) => {
+    setIsDarkMode(value);
+    setThemePreference(value ? "dark" : "light");
+  };
+
 
   // ==============================
   // STATES
@@ -44,6 +77,8 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+
 
   // ==============================
   // DATE PICKER HANDLER
