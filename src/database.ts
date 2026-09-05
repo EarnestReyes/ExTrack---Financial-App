@@ -3,6 +3,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   query,
   setDoc,
@@ -63,6 +64,8 @@ export const initDatabase = () => {
     );
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      firestoreId TEXT,
+      loanId TEXT,
       name TEXT NOT NULL,
       amount REAL NOT NULL,
       type TEXT NOT NULL,
@@ -72,6 +75,7 @@ export const initDatabase = () => {
     );
     CREATE TABLE IF NOT EXISTS loans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      firestoreId TEXT,
       title TEXT NOT NULL,
       totalAmount REAL NOT NULL,
       monthlyPayment REAL NOT NULL,
@@ -83,6 +87,7 @@ export const initDatabase = () => {
     );
     CREATE TABLE IF NOT EXISTS cards (
       id TEXT PRIMARY KEY NOT NULL,
+      firestoreId TEXT,
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       lastFour TEXT NOT NULL,
@@ -127,8 +132,10 @@ export const insertTransactionToDB = async (
   initDatabase();
 
   const result = db.runSync(
-    "INSERT INTO transactions (name, amount, type, category, date, time) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO transactions (firestoreId, loanId, name, amount, type, category, date, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     [
+      transaction.firestoreId || null,
+      transaction.loanId || null,
       transaction.name,
       transaction.amount,
       transaction.type,
@@ -313,8 +320,9 @@ export const insertLoanToDB = async (
   const createdAt = loan.createdAt || new Date().toISOString();
 
   const result = db.runSync(
-    "INSERT INTO loans (title, totalAmount, monthlyPayment, annualExpense, durationMonths, startDate, endDate, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO loans (firestoreId, title, totalAmount, monthlyPayment, annualExpense, durationMonths, startDate, endDate, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
+      loan.firestoreId || null,
       loan.title,
       loan.totalAmount,
       loan.monthlyPayment,
@@ -479,6 +487,11 @@ export const deleteLoanFromDB = async (
 };
 
 export const deleteMasterLoanFromDB = async (loanId: string): Promise<void> => {
+  initDatabase();
+
+  db.runSync("DELETE FROM transactions WHERE loanId = ?", [loanId]);
+  db.runSync("DELETE FROM loans WHERE firestoreId = ? OR id = ?", [loanId, Number(loanId) || -1]);
+
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
@@ -588,9 +601,13 @@ export const clearAllDataAndDatabase = async () => {
         const snapshot = await getDocs(colRef);
 
         if (!snapshot.empty) {
-          const batch = writeBatch(firestoreDb);
-          snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-          await batch.commit();
+          const docs = snapshot.docs;
+          for (let i = 0; i < docs.length; i += 500) {
+            const batch = writeBatch(firestoreDb);
+            const chunk = docs.slice(i, i + 500);
+            chunk.forEach((docSnap) => batch.delete(docSnap.ref));
+            await batch.commit();
+          }
         }
       }
     } catch (error) {
