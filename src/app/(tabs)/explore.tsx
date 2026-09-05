@@ -1024,7 +1024,22 @@ const openCreditScore = async () => {
     ]
   );
 };
-  
+
+const openChangePassword = () => {
+    Alert.alert("Change Password Function is Under Pilot Mode", 
+    "This function is currently under pilot mode. Thank you for your understanding!");
+  };
+
+const openDeveloper = () => {
+    Alert.alert("View Developer Under Pilot Mode", 
+    "This function is currently under pilot mode. Thank you for your understanding!");
+  };
+
+const openInformation = () => {
+    Alert.alert("System Information View Under Pilot Mode",
+    "This function is currently under pilot mode. Thank you for your understanding!");
+  };  
+
   return (
     <SafeAreaView
       style={styles.container}
@@ -1383,6 +1398,7 @@ const openCreditScore = async () => {
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Account Details</Text>
           <View style={styles.settingCard}>
+
             <TouchableOpacity style={styles.menuRow} onPress={openEditModal}>
               <Text style={styles.menuText}>Personal Information</Text>
               <Text style={styles.menuArrow}>›</Text>
@@ -1407,6 +1423,43 @@ const openCreditScore = async () => {
               <Text style={styles.menuText}>Help & Support</Text>
               <Text style={styles.menuArrow}>›</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* SECURITY DETAILS */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Security & Privacy</Text>
+          <View style={styles.settingCard}>
+
+            <TouchableOpacity style={styles.menuRow} onPress={openChangePassword}>
+              <Text style={styles.menuText}>Change Password</Text>
+              <Text style={styles.menuArrow}>›</Text>
+            </TouchableOpacity>
+            <View style={styles.divider} />
+          </View>
+        </View>
+
+        {/* DEVELOPER DETAILS */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Developer Details</Text>
+          <View style={styles.settingCard}>
+
+            <TouchableOpacity style={styles.menuRow} onPress={openDeveloper}>
+              <Text style={styles.menuText}>Developer</Text>
+              <Text style={styles.menuArrow}>›</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={openInformation}
+            >
+              <Text style={styles.menuText}>System Information</Text>
+              <Text style={styles.menuArrow}>›</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
           </View>
         </View>
 
