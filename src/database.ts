@@ -62,16 +62,6 @@ export interface SyncTask {
 }
 
 // ==========================================
-// Network Listener Initialization
-// ==========================================
-
-NetInfo.addEventListener((state: NetInfoState) => {
-  if (state.isConnected) {
-    syncFromFirestore();
-  }
-});
-
-// ==========================================
 // Authentication Resolver
 // ==========================================
 export const getCurrentUser = (): Promise<User | null> => {
@@ -618,6 +608,7 @@ export const setUserProfilePicture = async (
   try {
     initDatabase();
 
+    // 1. Persist locally to SQLite first
     db.runSync(
       `INSERT INTO user_profile (id, profilePic)
        VALUES (1, ?)
@@ -630,12 +621,20 @@ export const setUserProfilePicture = async (
       updatedAt: new Date().toISOString(),
     };
 
-    await safeFirestoreWrite("UPDATE", "user_profile", "profile", payload, async () => {
-      const user = await getCurrentUser();
-      if (!user) return;
-      const userRef = doc(firestoreDb, "users", user.uid);
-      await setDoc(userRef, payload, { merge: true });
-    });
+    // 2. Safe Firestore Write (Handles online sync & offline queue automatically)
+    await safeFirestoreWrite(
+      "UPDATE",
+      "user_profile",
+      "profile",
+      payload,
+      async () => {
+        const user = await getCurrentUser();
+        if (!user) return;
+        
+        const userRef = doc(firestoreDb, "users", user.uid);
+        await setDoc(userRef, payload, { merge: true });
+      }
+    );
 
     return true;
   } catch (error) {
@@ -653,22 +652,44 @@ export const getUserProfilePicture = (): string | null => {
     );
 
     const rawPic = result?.profilePic?.trim();
-    if (!rawPic) return null;
 
-    if (
-      rawPic.startsWith("http://") ||
-      rawPic.startsWith("https://") ||
-      rawPic.startsWith("file://") ||
-      rawPic.startsWith("data:image/")
-    ) {
-      return rawPic;
+    if (rawPic) {
+      if (
+        rawPic.startsWith("http://") ||
+        rawPic.startsWith("https://") ||
+        rawPic.startsWith("file://") ||
+        rawPic.startsWith("content://") ||
+        rawPic.startsWith("ph://") ||
+        rawPic.startsWith("data:image/")
+      ) {
+        return rawPic;
+      }
+      return `data:image/jpeg;base64,${rawPic}`;
     }
-
-    return `data:image/jpeg;base64,${rawPic}`;
   } catch (error) {
     console.error("Error fetching profile picture from DB:", error);
-    return null;
   }
+
+  return null; // Return null if no profile image exists
+};
+
+export const getInitials = (
+  displayName?: string | null,
+  email?: string | null
+): string => {
+  if (displayName?.trim()) {
+    const parts = displayName.trim().split(" ");
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  if (email?.trim()) {
+    return email.trim().slice(0, 2).toUpperCase();
+  }
+
+  return "U";
 };
 
 // ==========================================
@@ -734,3 +755,14 @@ export const clearCardsFromDB = async (): Promise<void> => {
     console.warn("Remote card clear deferred (network offline):", error);
   }
 };
+
+// ==========================================
+// Network Listener Initialization
+// ==========================================
+
+// PLACE THIS AT THE VERY BOTTOM OF database.ts
+NetInfo.addEventListener((state: NetInfoState) => {
+  if (state.isConnected) {
+    syncFromFirestore();
+  }
+});

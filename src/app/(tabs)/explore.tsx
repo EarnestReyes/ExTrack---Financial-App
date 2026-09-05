@@ -7,6 +7,7 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { clearAllDataAndDatabase, clearCardsFromDB } from "../../database";
 import { getDocs, QueryDocumentSnapshot } from "firebase/firestore";
 import { db as firestoreDb } from "../../config/firebase";
+import { setUserProfilePicture } from "../../database"; 
 
 
 import {
@@ -285,22 +286,32 @@ export default function ProfileScreen() {
     });
 
     if (!result.canceled && result.assets[0]?.base64) {
-      setIsUploadingImage(true);
-      try {
-        const imageUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
-        const userDocRef = doc(db, "users", currentUser.uid);
+  setIsUploadingImage(true);
+  try {
+    const imageUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
 
-        await updateDoc(userDocRef, { photoURL: imageUri });
-        setProfile((prev) => ({ ...prev, photoURL: imageUri }));
-        Alert.alert("Success", "Profile picture updated successfully!");
-      } catch (error) {
-        console.error("Error saving profile picture:", error);
-        Alert.alert("Error", "Failed to update profile picture.");
-      } finally {
-        setIsUploadingImage(false);
-      }
+    // 1. Save locally to SQLite first for immediate offline support
+    await setUserProfilePicture(imageUri);
+
+    // 2. Try updating Firestore if online
+    if (currentUser?.uid) {
+      const userDocRef = doc(db, "users", currentUser.uid);
+      await updateDoc(userDocRef, { photoURL: imageUri });
     }
-  };
+
+    // 3. Update React component state
+    setProfile((prev) => ({ ...prev, photoURL: imageUri }));
+    Alert.alert("Success", "Profile picture updated successfully!");
+  } catch (error) {
+    console.error("Error saving profile picture:", error);
+    
+    // Even if Firestore fails (e.g. offline), local update succeeds
+    setProfile((prev) => ({ ...prev, photoURL: `data:image/jpeg;base64,${result.assets[0].base64}` }));
+    Alert.alert("Saved Locally", "Profile picture updated on your device.");
+  } finally {
+    setIsUploadingImage(false);
+  }
+}
 
   const handlePhoneChange = (text: string) => {
     const cleaned = text.replace(/[^0-9]/g, "");
@@ -2192,3 +2203,5 @@ buttonTextCancel: {
 },
 
 });
+
+}
