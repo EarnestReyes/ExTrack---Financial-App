@@ -14,7 +14,7 @@ import { auth, db as firestoreDb } from "./config/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 
 // Single SQLite Database Instance
-const db = SQLite.openDatabaseSync("finance.db");
+export const db = SQLite.openDatabaseSync("extrack.db");
 
 // TypeScript Interfaces
 export interface TransactionItem {
@@ -28,6 +28,15 @@ export interface TransactionItem {
   date: string;
   time: string;
   userId?: string;
+}
+
+interface CreditScoreModalProps {
+  visible: boolean;
+  onClose: () => void;
+  creditScore?: number; // e.g. 720 (Range: 300 to 850)
+  paymentHistoryCount?: number;
+  activeLoansCount?: number;
+  creditUtilizationPct?: number;
 }
 
 export interface LoanItem {
@@ -127,6 +136,16 @@ export const initDatabase = () => {
       firestoreId TEXT NOT NULL,
       payload TEXT,
       createdAt TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS credit_scores (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      tier TEXT NOT NULL, -- 'Excellent', 'Good', 'Fair', 'Poor'
+      payment_history_score INTEGER,
+      credit_utilization_pct REAL,
+      is_estimated INTEGER DEFAULT 0, -- 1 if computed offline, 0 if fetched from bureau
+      updated_at TEXT NOT NULL
     );
   `);
 };
@@ -754,6 +773,157 @@ export const clearCardsFromDB = async (): Promise<void> => {
   } catch (error) {
     console.warn("Remote card clear deferred (network offline):", error);
   }
+};
+
+export interface CreditScoreMetrics {
+  activeLoansCount: number;
+  completedLoansCount: number;
+  paymentHistoryCount: number;
+  totalLoanAmount: number;
+  totalMonthlyPayments: number;
+}
+
+// ==========================================
+// Firestore Credit Score Operations
+// ==========================================
+
+// ==========================================
+// Firestore Credit Score Operations
+// ==========================================
+
+export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScoreMetrics> => {
+  const user = await getCurrentUser();
+  if (!user) {
+    return {
+      activeLoansCount: 0,
+      completedLoansCount: 0,
+      paymentHistoryCount: 0,
+      totalLoanAmount: 0,
+      totalMonthlyPayments: 0,
+    };
+  }
+
+  const userPath = `users/${user.uid}`;
+  // Use YYYY-MM-DD string comparison to accurately match date-only strings like "2026-09-05"
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  try {
+    // 1. Fetch Loans Collection
+    const loansRef = collection(firestoreDb, userPath, "loans");
+    const loansSnapshot = await getDocs(loansRef);
+
+    let activeLoansCount = 0;
+    let completedLoansCount = 0;
+    let totalLoanAmount = 0;
+    let totalMonthlyPayments = 0;
+
+    loansSnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const amount = Number(data.totalAmount) || 0;
+      const monthly = Number(data.monthlyPayment) || 0;
+      const endDate = data.endDate;
+
+      // Active if endDate is today/future or not set
+      const isActive = !endDate || endDate >= todayStr;
+
+      if (isActive) {
+        activeLoansCount++;
+        totalLoanAmount += amount;
+        totalMonthlyPayments += monthly;
+      } else {
+        completedLoansCount++;
+      }
+    });
+
+    // 2. Fetch All Transactions (Avoid Firestore query case-sensitivity & null-field drops)
+    const txRef = collection(firestoreDb, userPath, "transactions");
+    const txSnapshot = await getDocs(txRef);
+
+    let paymentHistoryCount = 0;
+
+    txSnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      
+      const txType = String(data.type || "").toLowerCase();
+      const category = String(data.category || "").toLowerCase();
+      const loanId = data.loanId;
+
+      // Filter strictly for Expense type (handles "Expense" vs "expense")
+      if (txType === "expense") {
+        const hasValidLoanId = loanId !== null && loanId !== undefined && loanId !== "" && loanId !== "null";
+        const isRepaymentCategory =
+          category.includes("loan") ||
+          category.includes("repayment") ||
+          category.includes("debt") ||
+          category.includes("food"); // Add custom category fallbacks if needed
+
+        if (hasValidLoanId || isRepaymentCategory) {
+          paymentHistoryCount++;
+        }
+      }
+    });
+
+    return {
+      activeLoansCount,
+      completedLoansCount,
+      paymentHistoryCount,
+      totalLoanAmount,
+      totalMonthlyPayments,
+    };
+  } catch (error) {
+    console.error("Error fetching credit metrics from Firestore:", error);
+    return {
+      activeLoansCount: 0,
+      completedLoansCount: 0,
+      paymentHistoryCount: 0,
+      totalLoanAmount: 0,
+      totalMonthlyPayments: 0,
+    };
+  }
+};
+
+export const saveCreditScoreToFirestore = async (
+  userId: string,
+  score: number,
+  tier: string,
+  paymentHistoryScore: number,
+  creditUtilizationPct: number,
+  isEstimated: boolean = true
+): Promise<void> => {
+  initDatabase();
+  const timestamp = new Date().toISOString();
+
+  // 1. Persist locally in SQLite
+  db.runSync(
+    `INSERT INTO credit_scores (user_id, score, tier, payment_history_score, credit_utilization_pct, is_estimated, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      score,
+      tier,
+      paymentHistoryScore,
+      creditUtilizationPct,
+      isEstimated ? 1 : 0,
+      timestamp,
+    ]
+  );
+
+  // 2. Persist snapshot to Firestore
+  const payload = {
+    userId,
+    score,
+    tier,
+    paymentHistoryScore,
+    creditUtilizationPct,
+    isEstimated,
+    updatedAt: timestamp,
+  };
+
+  const scoreDocRef = doc(firestoreDb, `users/${userId}/credit_scores`, "latest");
+
+  await safeFirestoreWrite("UPDATE", "user_profile", "credit_scores", payload, async () => {
+    await setDoc(scoreDocRef, payload, { merge: true });
+  });
 };
 
 // ==========================================

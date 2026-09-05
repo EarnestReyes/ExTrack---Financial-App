@@ -7,8 +7,9 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { clearAllDataAndDatabase, clearCardsFromDB } from "../../database";
 import { getDocs, QueryDocumentSnapshot } from "firebase/firestore";
 import { db as firestoreDb } from "../../config/firebase";
-import { setUserProfilePicture } from "../../database"; 
-
+import Svg, { Path } from 'react-native-svg';
+import { CreditScoreModal } from "@/components/CreditScoreModal";
+import { calculateCreditScoreFromDB, ComputedCreditData } from "../../utils/creditScore";
 
 import {
   addDoc,
@@ -86,6 +87,8 @@ interface UserProfile {
 }
 
 export default function ProfileScreen() {
+
+  
   const { logout } = useAuth();
   const router = useRouter();
   const systemColorScheme = useColorScheme();
@@ -251,6 +254,7 @@ export default function ProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       const savedTheme = getThemePreference();
+      loadCreditScore();
       if (savedTheme !== null) {
         setIsDarkMode(savedTheme === "dark");
       } else {
@@ -286,32 +290,22 @@ export default function ProfileScreen() {
     });
 
     if (!result.canceled && result.assets[0]?.base64) {
-  setIsUploadingImage(true);
-  try {
-    const imageUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      setIsUploadingImage(true);
+      try {
+        const imageUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
+        const userDocRef = doc(db, "users", currentUser.uid);
 
-    // 1. Save locally to SQLite first for immediate offline support
-    await setUserProfilePicture(imageUri);
-
-    // 2. Try updating Firestore if online
-    if (currentUser?.uid) {
-      const userDocRef = doc(db, "users", currentUser.uid);
-      await updateDoc(userDocRef, { photoURL: imageUri });
+        await updateDoc(userDocRef, { photoURL: imageUri });
+        setProfile((prev) => ({ ...prev, photoURL: imageUri }));
+        Alert.alert("Success", "Profile picture updated successfully!");
+      } catch (error) {
+        console.error("Error saving profile picture:", error);
+        Alert.alert("Error", "Failed to update profile picture.");
+      } finally {
+        setIsUploadingImage(false);
+      }
     }
-
-    // 3. Update React component state
-    setProfile((prev) => ({ ...prev, photoURL: imageUri }));
-    Alert.alert("Success", "Profile picture updated successfully!");
-  } catch (error) {
-    console.error("Error saving profile picture:", error);
-    
-    // Even if Firestore fails (e.g. offline), local update succeeds
-    setProfile((prev) => ({ ...prev, photoURL: `data:image/jpeg;base64,${result.assets[0].base64}` }));
-    Alert.alert("Saved Locally", "Profile picture updated on your device.");
-  } finally {
-    setIsUploadingImage(false);
-  }
-}
+  };
 
   const handlePhoneChange = (text: string) => {
     const cleaned = text.replace(/[^0-9]/g, "");
@@ -368,6 +362,7 @@ export default function ProfileScreen() {
   useEffect(() => {
   if (!currentUser?.uid) {
     setLoading(false);
+    
     return;
   }
 
@@ -630,7 +625,15 @@ const unsubscribeCards = onSnapshot(
   }
 };
 
-  const handleAction = (title: string) => {
+  // 1. Declare the state for your Credit Modal
+const [isCreditModalVisible, setIsCreditModalVisible] = useState(false);
+
+// 2. Updated action handler
+const handleAction = (title: string) => {
+  if (title === "Credit") {
+    setIsCreditModalVisible(true);
+    return;
+  }
   if (title === "Loan") {
     setIsLoanModalVisible(true);
     return;
@@ -743,6 +746,126 @@ const deleteSelectedCard = async () => {
   } catch (error) {
     console.error("Error deleting card:", error);
     Alert.alert("Error", "Unable to delete this card right now.");
+  }
+};
+
+
+// CREDIT SCORE
+const [creditScoreVisible, setCreditScoreVisible] = useState(false);
+
+const [creditData, setCreditData] = useState<ComputedCreditData>({
+  score: 0, 
+  tier: "Fair", 
+  paymentHistoryCount: 0,
+  activeLoansCount: 0,
+  creditUtilizationPct: 0,
+});
+
+// Open Credit Score modal with LIVE database data
+const handleOpenCreditScore = async () => {
+  try {
+    // Refresh the score before opening the modal
+    await loadCreditScore();
+
+    setCreditScoreVisible(true);
+  } catch (error) {
+    console.error("❌ Error opening credit score:", error);
+
+    // Still allow the modal to open using the last known values
+    setCreditScoreVisible(true);
+  }
+};
+
+
+
+const [creditScore, setCreditScore] = useState<number>(700);
+const [scoreCategory, setScoreCategory] = useState<string>("Good");
+const [activeLoansCount, setActiveLoansCount] = useState<number>(0);
+const [onTimePayments, setOnTimePayments] = useState<number>(0);
+const [totalLoansCount, setTotalLoansCount] = useState<number>(0);
+
+// Load the latest credit score data from the database
+const loadCreditScore = useCallback(async () => {
+  try {
+    const data = await calculateCreditScoreFromDB();
+
+    setCreditData(data);
+
+    console.log("📊 Credit Score Updated:", data);
+  } catch (error) {
+    console.error("❌ Error loading credit score:", error);
+  }
+}, []);
+
+const openCreditScore = async () => {
+  setLoading(true);
+  try {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+
+    // 1. Fetch user loans from Firestore
+    const userPath = `users/${currentUser.uid}`;
+    const loansRef = collection(firestoreDb, userPath, "loans");
+    const loansSnapshot = await getDocs(loansRef);
+
+    let activeCount = 0;
+    let completedCount = 0;
+
+    loansSnapshot.docs.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data.status === "completed" || data.remainingAmount <= 0) {
+        completedCount++;
+      } else {
+        activeCount++;
+      }
+    });
+
+    // 2. Fetch loan deduction transactions to calculate payment history
+    const transactionsRef = collection(firestoreDb, userPath, "transactions");
+    const transSnapshot = await getDocs(transactionsRef);
+    
+    const loanPayments = transSnapshot.docs.filter((docSnap) => {
+      const data = docSnap.data();
+      return data.loanId || data.category === "Loan Repayment";
+    });
+
+    const totalLoans = activeCount + completedCount;
+    const paymentCount = loanPayments.length;
+
+    // 3. Dynamic Credit Score calculation algorithm (Range: 300 - 850)
+    let calculatedScore = 650; // Base baseline score
+
+    // Payment History Boost (+15 points per payment, max +120)
+    calculatedScore += Math.min(paymentCount * 15, 120);
+
+    // Completed Loans Boost (+25 points per completed loan, max +100)
+    calculatedScore += Math.min(completedCount * 25, 100);
+
+    // High Active Loans Penalty (-20 per excess active loan if over 2)
+    if (activeCount > 2) {
+      calculatedScore -= (activeCount - 2) * 20;
+    }
+
+    // Clamp score strictly between 300 and 850
+    const finalScore = Math.max(300, Math.min(850, calculatedScore));
+
+    // Determine Credit Rating Tier
+    let category = "Poor";
+    if (finalScore >= 750) category = "Excellent";
+    else if (finalScore >= 700) category = "Good";
+    else if (finalScore >= 650) category = "Fair";
+
+    // Set States
+    setCreditScore(finalScore);
+    setScoreCategory(category);
+    setActiveLoansCount(activeCount);
+    setTotalLoansCount(totalLoans);
+    setOnTimePayments(paymentCount);
+  } catch (error) {
+    console.error("Error calculating credit score:", error);
+  } finally {
+    setLoading(false);
+    setCreditScoreVisible(true);
   }
 };
 
@@ -949,41 +1072,44 @@ const deleteSelectedCard = async () => {
           ) : null}
 
           <View style={styles.tierBadge}>
-            <Text style={styles.tierBadgeText}>✨ {profile.tier}</Text>
+            <Text style={styles.tierBadgeText}>{profile.tier}</Text>
           </View>
         </View>
 
         {/* QUICK ACTIONS */}
         <View style={styles.quickActionsContainer}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => handleAction("Under Pilot Mode")}
+          <TouchableOpacity 
+            style={styles.actionButton} 
+            onPress={() => handleOpenCreditScore()}
           >
-            <View
-              style={[
-                styles.actionIconContainer,
-                { backgroundColor: "#e0e7ff" },
-              ]}
-            >
-              <Text style={styles.actionIcon}>↗</Text>
+            <View style={[styles.actionIconContainer, { backgroundColor: "#e0f2fe" }]}>
+              <Text style={styles.actionIcon}>🛡️</Text>
             </View>
             <Text style={styles.actionLabel}>Credit</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-  style={styles.actionButton}
-  onPress={() => handleAction("Loan")}
->
-  <View
-    style={[
-      styles.actionIconContainer,
-      { backgroundColor: "#e0e7ff" },
-    ]}
-  >
-    <Ionicons name="calendar-outline" size={20} color="#4f46e5" />
-  </View>
-  <Text style={styles.actionLabel}>Loan</Text>
-</TouchableOpacity>
+               <CreditScoreModal visible={creditScoreVisible} onClose={() => 
+                setCreditScoreVisible(false)} 
+                creditScore={creditData.score} 
+                paymentHistoryCount={creditData.paymentHistoryCount} 
+                activeLoansCount={creditData.activeLoansCount} 
+                creditUtilizationPct={creditData.creditUtilizationPct} 
+                />
+
+                <TouchableOpacity
+        style={styles.actionButton}
+        onPress={() => handleAction("Loan")}
+      >
+        <View
+          style={[
+            styles.actionIconContainer,
+            { backgroundColor: "#e0e7ff" },
+          ]}
+        >
+          <Ionicons name="calendar-outline" size={20} color="#4f46e5" />
+        </View>
+        <Text style={styles.actionLabel}>Loan</Text>
+      </TouchableOpacity>
 
 <Modal
   visible={isLoanModalVisible}
@@ -2202,6 +2328,123 @@ buttonTextCancel: {
   color: "#F6F6F7",
 },
 
+
+
 });
 
-}
+const styles = StyleSheet.create({
+  analyticsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.58)',
+    justifyContent: 'flex-end',
+  },
+  analyticsContent: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  analyticsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 20,
+  },
+  analyticsTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  analyticsSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  analyticsCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  analyticsCloseText: {
+    fontSize: 22,
+    color: '#64748b',
+    lineHeight: 24,
+  },
+
+  // Gauge specific styles
+  gaugeContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+  },
+  gaugeTextOverlay: {
+    position: 'absolute',
+    top: 45,
+    alignItems: 'center',
+  },
+  gaugeLabel: {
+    fontSize: 14,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  gaugeValue: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 2,
+  },
+  rangeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: 220,
+    marginTop: 4,
+  },
+  rangeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#94a3b8',
+  },
+
+  // 3-Card Row layout styles
+  cardsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 24,
+  },
+  metricBox: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 6,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  cardTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  cardValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+});
