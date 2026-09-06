@@ -14,9 +14,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  Keyboard,
+  KeyboardAvoidingView,
   Dimensions,
   Image,
   Modal,
+  Platform,
   PanResponder,
   ScrollView,
   StyleSheet,
@@ -1418,117 +1421,129 @@ export default function HomeScreen() {
       </Animated.View>
 
       {/* ADD TRANSACTION MODAL */}
+      {/* ADD TRANSACTION MODAL */}
       <Modal visible={showForm} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
-            </Text>
-
-            {/* TYPE SWITCHER */}
-            <View style={styles.typeContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.typeButton,
-                  type === "Expense" && styles.typeButtonActiveExpense,
-                ]}
-                onPress={() => setType("Expense")}
-              >
-                <Text
-                  style={[
-                    styles.typeText,
-                    type === "Expense" && styles.typeTextActive,
-                  ]}
-                >
-                  Expense
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.typeButton,
-                  type === "Income" && styles.typeButtonActiveIncome,
-                ]}
-                onPress={() => setType("Income")}
-              >
-                <Text
-                  style={[
-                    styles.typeText,
-                    type === "Income" && styles.typeTextActive,
-                  ]}
-                >
-                  Income
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.inputLabel}>Title</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. Groceries"
-              placeholderTextColor="#94a3b8"
-              value={name}
-              onChangeText={setName}
-            />
-
-            <Text style={styles.inputLabel}>Amount (₱)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="₱0.00"
-              placeholderTextColor="#94a3b8"
-              keyboardType="decimal-pad"
-              value={amount}
-              onFocus={handleAmountFocus}
-              onChangeText={handleAmountChange}
-            />
-
-            <Text style={styles.inputLabel}>Category</Text>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
             <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ marginBottom: 16 }}
+              contentContainerStyle={styles.modalScrollContainer}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
-              {categories.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[
-                    styles.categoryChip,
-                    category === cat && styles.categoryChipActive,
-                  ]}
-                  onPress={() => setCategory(cat)}
-                >
-                  <Text
-                    style={[
-                      styles.categoryText,
-                      category === cat && styles.categoryTextActive,
-                    ]}
-                  >
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={closeTransactionForm}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleSaveTransaction}
-              >
-                <Text style={styles.saveButtonText}>
-                  {editingTransactionId ? "Update" : "Save"}
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>
+                  {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
                 </Text>
-              </TouchableOpacity>
-            </View>
+
+                {/* TYPE SWITCHER */}
+                <View style={styles.typeContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.typeButton,
+                      type === "Expense" && styles.typeButtonActiveExpense,
+                    ]}
+                    onPress={() => setType("Expense")}
+                  >
+                    <Text
+                      style={[
+                        styles.typeText,
+                        type === "Expense" && styles.typeTextActive,
+                      ]}
+                    >
+                      Expense
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.typeButton,
+                      type === "Income" && styles.typeButtonActiveIncome,
+                    ]}
+                    onPress={() => setType("Income")}
+                  >
+                    <Text
+                      style={[
+                        styles.typeText,
+                        type === "Income" && styles.typeTextActive,
+                      ]}
+                    >
+                      Income
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.inputLabel}>Title</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Groceries"
+                  placeholderTextColor="#94a3b8"
+                  value={name}
+                  onChangeText={setName}
+                />
+
+                <Text style={styles.inputLabel}>Amount (₱)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="₱0.00"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="decimal-pad"
+                  value={amount}
+                  onFocus={handleAmountFocus}
+                  onChangeText={handleAmountChange}
+                />
+
+                <Text style={styles.inputLabel}>Category</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginBottom: 16 }}
+                >
+                  {categories.map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.categoryChip,
+                        category === cat && styles.categoryChipActive,
+                      ]}
+                      onPress={() => setCategory(cat)}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryText,
+                          category === cat && styles.categoryTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.cancelButton]}
+                    onPress={closeTransactionForm}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.saveButton]}
+                    onPress={handleSaveTransaction}
+                  >
+                    <Text style={styles.saveButtonText}>
+                      {editingTransactionId ? "Update" : "Save"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+      </SafeAreaView>
   );
 }
 
@@ -1543,6 +1558,13 @@ const createStyles = (isDarkMode: boolean) => {
     container: {
       flex: 1,
       backgroundColor,
+    },
+    modalScrollContainer: {
+      flexGrow: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingVertical: 24,
+      width: "100%",
     },
     dashboardContainer: {
       flex: 1,

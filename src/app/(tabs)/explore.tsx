@@ -9,6 +9,9 @@ import { getDocs, QueryDocumentSnapshot } from "firebase/firestore";
 import { db as firestoreDb } from "../../config/firebase";
 import Svg, { Path } from 'react-native-svg';
 import { CreditScoreModal } from "@/components/CreditScoreModal";
+import SystemInformationModal from '@/components/SystemInformationModal';
+import DeveloperModal from '@/components/DeveloperModal';
+import ChangePasswordModal from '@/components/ChangePasswordModal'
 import { calculateCreditScoreFromDB, ComputedCreditData } from "../../utils/creditScore";
 
 import {
@@ -249,6 +252,7 @@ export default function ProfileScreen() {
 
   // Memoize styles to prevent re-creation on every render
   const styles = useMemo(() => createStyles(isDarkMode), [isDarkMode]);
+  const modalStyles = useMemo(() => createModalStyles(isDarkMode), [isDarkMode]);
   const currentUser = auth.currentUser;
 
   useFocusEffect(
@@ -752,6 +756,9 @@ const deleteSelectedCard = async () => {
 
 // CREDIT SCORE
 const [creditScoreVisible, setCreditScoreVisible] = useState(false);
+const [information, setInformation] = useState(false);
+const [password, setPassword] = useState(false);
+const [developer, setDeveloper] = useState(false);
 
 const [creditData, setCreditData] = useState<ComputedCreditData>({
   score: 0, 
@@ -1026,18 +1033,18 @@ const openCreditScore = async () => {
 };
 
 const openChangePassword = () => {
-    Alert.alert("Change Password Function is Under Pilot Mode", 
-    "This function is currently under pilot mode. Thank you for your understanding!");
+    console.log("Opening Developer Modal"); // Debug log
+    setPassword(true);
   };
 
 const openDeveloper = () => {
-    Alert.alert("View Developer Under Pilot Mode", 
-    "This function is currently under pilot mode. Thank you for your understanding!");
+    console.log("Opening Developer Modal"); // Debug log
+    setDeveloper(true);
   };
 
 const openInformation = () => {
-    Alert.alert("System Information View Under Pilot Mode",
-    "This function is currently under pilot mode. Thank you for your understanding!");
+    console.log("Opening Developer Modal"); // Debug log
+    setInformation(true);
   };  
 
   return (
@@ -1126,139 +1133,150 @@ const openInformation = () => {
         <Text style={styles.actionLabel}>Loan</Text>
       </TouchableOpacity>
 
-<Modal
-  visible={isLoanModalVisible}
-  animationType="slide"
-  transparent={true}
-  onRequestClose={() => setIsLoanModalVisible(false)}
->
-  <View style={modalStyles.overlay}>
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={{ width: "100%" }}
-    >
-      <View style={modalStyles.container}>
-        <Text style={modalStyles.title}>Track New Loan</Text>
-
-        <Text style={modalStyles.label}>Loan Title / Description</Text>
-        <TextInput
-          style={modalStyles.input}
-          placeholder="e.g. Car Loan, Emergency Fund"
-          placeholderTextColor="#9ca3af"
-          value={loanTitle}
-          onChangeText={setLoanTitle}
-        />
-
-        <Text style={modalStyles.label}>Monthly Amount (₱)</Text>
-        <TextInput
-          style={modalStyles.input}
-          placeholder="0.00"
-          placeholderTextColor="#9ca3af"
-          keyboardType="numeric"
-          value={loanAmount}
-          onChangeText={setLoanAmount}
-        />
-
-        <Text style={modalStyles.label}>Duration (Months)</Text>
-        <TextInput
-          style={modalStyles.input}
-          placeholder="e.g. 12"
-          placeholderTextColor="#9ca3af"
-          keyboardType="number-pad"
-          value={loanDuration}
-          onChangeText={setLoanDuration}
-        />
-
-        {/* Start Date Picker Button */}
-            <Text style={modalStyles.label}>Start Date</Text>
-            <TouchableOpacity
-              style={modalStyles.datePickerButton}
-              onPress={() => setShowDatePicker((prev) => !prev)}
-            >
-              <Ionicons name="calendar-outline" size={18} color="#4b5563" />
-              <Text style={modalStyles.datePickerText}>
-                {loanStartDate.toLocaleDateString("en-US", {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                })}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Date Picker Component */}
-            {showDatePicker && (
-              <DateTimePicker
-                value={loanStartDate}
-                mode="date"
-                display={Platform.OS === "ios" ? "inline" : "default"}
-                onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                  // 1. Android native dialogs close automatically on confirm or cancel
-                  if (Platform.OS === "android") {
-                    setShowDatePicker(false);
-                  }
-
-                  // 2. Update state while keeping the inline component open on iOS
-                  if (selectedDate) {
-                    setLoanStartDate(selectedDate);
-                  }
-                  
-                  // 3. Close if the native modal was explicitly dismissed
-                  if (event.type === "dismissed") {
-                    setShowDatePicker(false);
-                  }
-                }}
-              />
-            )}
-
-        {/* Dynamic Summary Card */}
-        <View style={modalStyles.summaryCard}>
-        <View style={modalStyles.summaryRow}>
-          <Text style={modalStyles.summaryLabel}>End Date:</Text>
-          <Text style={modalStyles.summaryValue}>
-            {calculatedEndDate
-              ? calculatedEndDate.toLocaleDateString("en-US", {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                })
-              : "--"}
-          </Text>
-        </View>
-        <View style={modalStyles.summaryRow}>
-          <Text style={modalStyles.summaryLabel}>Total Loan Cost:</Text>
-          <Text style={modalStyles.summaryValueBold}>
-            ₱{((parseFloat(loanAmount) || 0) * (parseInt(loanDuration, 10) || 0)).toLocaleString("en-US", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </Text>
-        </View>
-      </View>
-
-        {/* Action Buttons */}
-        <View style={modalStyles.buttonContainer}>
-          <TouchableOpacity
-            style={[modalStyles.button, modalStyles.cancelButton]}
-            onPress={() => setIsLoanModalVisible(false)}
-            disabled={isSavingLoan}
+          <Modal
+            visible={isLoanModalVisible}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={() => setIsLoanModalVisible(false)}
           >
-            <Text style={modalStyles.buttonTextCancel}>Cancel</Text>
-          </TouchableOpacity>
+            <View style={modalStyles.overlay}>
+              <KeyboardAvoidingView
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                style={{ width: "100%" }}
+              >
+                <View style={[modalStyles.container, { maxHeight: "85%" }]}>
+                  <ScrollView
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={{ flexGrow: 1 }}
+                  >
+                    <Text style={modalStyles.title}>Track New Loan</Text>
 
-          <TouchableOpacity
-            style={[modalStyles.button, modalStyles.submitButton]}
-            onPress={handleSaveLoan}
-            disabled={isSavingLoan}
-          >
-            <Text style={modalStyles.buttonText}>
-              {isSavingLoan ? "Saving..." : "Save Record"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
-  </View>
-</Modal>
+                    <Text style={modalStyles.label}>Loan Title / Description</Text>
+                    <TextInput
+                      style={modalStyles.input}
+                      placeholder="e.g. Car Loan, Emergency Fund"
+                      placeholderTextColor={isDarkMode ? "#64748b" : "#9ca3af"}
+                      value={loanTitle}
+                      onChangeText={setLoanTitle}
+                    />
+
+                    <Text style={modalStyles.label}>Monthly Amount (₱)</Text>
+                    <TextInput
+                      style={modalStyles.input}
+                      placeholder="0.00"
+                      placeholderTextColor={isDarkMode ? "#64748b" : "#9ca3af"}
+                      keyboardType="numeric"
+                      value={loanAmount}
+                      onChangeText={setLoanAmount}
+                    />
+
+                    <Text style={modalStyles.label}>Duration (Months)</Text>
+                    <TextInput
+                      style={modalStyles.input}
+                      placeholder="e.g. 12"
+                      placeholderTextColor={isDarkMode ? "#64748b" : "#9ca3af"}
+                      keyboardType="number-pad"
+                      value={loanDuration}
+                      onChangeText={setLoanDuration}
+                    />
+
+                    {/* Start Date Picker Button */}
+                    <Text style={modalStyles.label}>Start Date</Text>
+                    <TouchableOpacity
+                      style={modalStyles.datePickerButton}
+                      onPress={() => setShowDatePicker((prev) => !prev)}
+                    >
+                      <Ionicons
+                        name="calendar-outline"
+                        size={18}
+                        color={isDarkMode ? "#94a3b8" : "#4b5563"}
+                      />
+                      <Text style={modalStyles.datePickerText}>
+                        {loanStartDate.toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Date Picker Component */}
+                    {showDatePicker && (
+                      <DateTimePicker
+                        value={loanStartDate}
+                        mode="date"
+                        display={Platform.OS === "ios" ? "inline" : "default"}
+                        textColor={isDarkMode ? "#ffffff" : "#000000"}
+                        themeVariant={isDarkMode ? "dark" : "light"}
+                        onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                          if (Platform.OS === "android") {
+                            setShowDatePicker(false);
+                          }
+                          if (selectedDate) {
+                            setLoanStartDate(selectedDate);
+                          }
+                          if (event.type === "dismissed") {
+                            setShowDatePicker(false);
+                          }
+                        }}
+                      />
+                    )}
+
+                    {/* Dynamic Summary Card */}
+                    <View style={modalStyles.summaryCard}>
+                      <View style={modalStyles.summaryRow}>
+                        <Text style={modalStyles.summaryLabel}>End Date:</Text>
+                        <Text style={modalStyles.summaryValue}>
+                          {calculatedEndDate
+                            ? calculatedEndDate.toLocaleDateString("en-US", {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                              })
+                            : "--"}
+                        </Text>
+                      </View>
+                      <View style={modalStyles.summaryRow}>
+                        <Text style={modalStyles.summaryLabel}>Total Loan Cost:</Text>
+                        <Text style={modalStyles.summaryValueBold}>
+                          ₱
+                          {(
+                            (parseFloat(loanAmount) || 0) *
+                            (parseInt(loanDuration, 10) || 0)
+                          ).toLocaleString("en-US", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Action Buttons */}
+                    <View style={modalStyles.buttonContainer}>
+                      <TouchableOpacity
+                        style={[modalStyles.button, modalStyles.cancelButton]}
+                        onPress={() => setIsLoanModalVisible(false)}
+                        disabled={isSavingLoan}
+                      >
+                        <Text style={modalStyles.buttonTextCancel}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[modalStyles.button, modalStyles.submitButton]}
+                        onPress={handleSaveLoan}
+                        disabled={isSavingLoan}
+                      >
+                        <Text style={modalStyles.buttonText}>
+                          {isSavingLoan ? "Saving..." : "Save Record"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </KeyboardAvoidingView>
+            </View>
+          </Modal>
 
           <TouchableOpacity
             style={styles.actionButton}
@@ -1439,29 +1457,44 @@ const openInformation = () => {
           </View>
         </View>
 
-        {/* DEVELOPER DETAILS */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Developer Details</Text>
-          <View style={styles.settingCard}>
+              {/* DEVELOPER DETAILS */}
+      <View style={styles.sectionContainer}>
+        <Text style={styles.sectionTitle}>Developer Details</Text>
+        <View style={styles.settingCard}>
 
-            <TouchableOpacity style={styles.menuRow} onPress={openDeveloper}>
-              <Text style={styles.menuText}>Developer</Text>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.menuRow} onPress={openDeveloper}>
+            <Text style={styles.menuText}>Developer</Text>
+            <Text style={styles.menuArrow}>›</Text>
+          </TouchableOpacity>
 
-            <View style={styles.divider} />
+          <View style={styles.divider} />
 
-            <TouchableOpacity
-              style={styles.menuRow}
-              onPress={openInformation}
-            >
-              <Text style={styles.menuText}>System Information</Text>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuRow}
+            onPress={openInformation}
+          >
+            <Text style={styles.menuText}>System Information</Text>
+            <Text style={styles.menuArrow}>›</Text>
+          </TouchableOpacity>
 
-            <View style={styles.divider} />
-          </View>
         </View>
+      </View>
+
+      {/* MODAL POP-UPS */}
+      <SystemInformationModal 
+        visible={information} 
+        onClose={() => setInformation(false)} 
+      />
+
+      <DeveloperModal 
+        visible={developer} 
+        onClose={() => setDeveloper(false)} 
+      />
+
+      <ChangePasswordModal 
+        visible={password} 
+        onClose={() => setPassword(false)} 
+      />
 
         {/* LOGOUT BUTTON */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -1598,104 +1631,114 @@ const openInformation = () => {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             style={styles.keyboardAvoidingView}
           >
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Add card</Text>
-              <Text style={styles.cardFormHint}>
-                For your security, only the card summary is stored. Never enter
-                your PIN or CVV.
-              </Text>
+            <View style={[styles.modalContent, { maxHeight: "85%" }]}>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ flexGrow: 1 }}
+              >
+                <Text style={styles.modalTitle}>
+                  {editingCardId ? "Edit card" : "Add card"}
+                </Text>
+                <Text style={styles.cardFormHint}>
+                  For your security, only the card summary is stored. Never enter
+                  your PIN or CVV.
+                </Text>
 
-              <Text style={styles.inputLabel}>Card name</Text>
-              <TextInput
-                style={styles.input}
-                value={cardName}
-                onChangeText={(value) => {
-                  const lettersOnly = value.replace(/[0-9]/g, "");
-                  const capitalized = lettersOnly.replace(/\b\w/g, (char) => char.toUpperCase());
-                  setCardName(capitalized);
-                }}
-                placeholder="e.g. Main Debit Card"
-                placeholderTextColor="#94a3b8"
-                autoCapitalize="words"
-              />
+                <Text style={styles.inputLabel}>Card name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={cardName}
+                  onChangeText={(value) => {
+                    const lettersOnly = value.replace(/[0-9]/g, "");
+                    const capitalized = lettersOnly.replace(/\b\w/g, (char) => char.toUpperCase());
+                    setCardName(capitalized);
+                  }}
+                  placeholder="e.g. Main Debit Card"
+                  placeholderTextColor="#94a3b8"
+                  autoCapitalize="words"
+                />
 
-              <Text style={styles.inputLabel}>Card type</Text>
-              <View style={styles.cardTypeRow}>
-                {(["Debit", "Credit"] as const).map((option) => (
-                  <TouchableOpacity
-                    key={option}
-                    style={[
-                      styles.cardTypeButton,
-                      cardType === option && styles.cardTypeButtonActive,
-                    ]}
-                    onPress={() => setCardType(option)}
-                  >
-                    <Text
+                <Text style={styles.inputLabel}>Card type</Text>
+                <View style={styles.cardTypeRow}>
+                  {(["Debit", "Credit"] as const).map((option) => (
+                    <TouchableOpacity
+                      key={option}
                       style={[
-                        styles.cardTypeText,
-                        cardType === option && styles.cardTypeTextActive,
+                        styles.cardTypeButton,
+                        cardType === option && styles.cardTypeButtonActive,
                       ]}
+                      onPress={() => setCardType(option)}
                     >
-                      {option}
-                    </Text>
+                      <Text
+                        style={[
+                          styles.cardTypeText,
+                          cardType === option && styles.cardTypeTextActive,
+                        ]}
+                      >
+                        {option}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.inputLabel}>Last four digits</Text>
+                <TextInput
+                  style={styles.input}
+                  value={cardLastFour}
+                  onChangeText={(value) =>
+                    setCardLastFour(value.replace(/\D/g, "").slice(0, 4))
+                  }
+                  placeholder="1234"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="number-pad"
+                  returnKeyType="next"
+                  maxLength={4}
+                />
+
+                <Text style={styles.inputLabel}>Expiry (MM/YY)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={cardExpiry}
+                  onChangeText={(value) => {
+                    const digits = value.replace(/\D/g, "").slice(0, 4);
+                    setCardExpiry(
+                      digits.length > 2
+                        ? `${digits.slice(0, 2)}/${digits.slice(2)}`
+                        : digits,
+                    );
+                  }}
+                  placeholder="12/30"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="number-pad"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={5}
+                />
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.cancelButton]}
+                    onPress={closeCardModal}
+                    disabled={isSavingCard}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
                   </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.inputLabel}>Last four digits</Text>
-              <TextInput
-                style={styles.input}
-                value={cardLastFour}
-                onChangeText={(value) =>
-                  setCardLastFour(value.replace(/\D/g, "").slice(0, 4))
-                }
-                placeholder="1234"
-                placeholderTextColor="#94a3b8"
-                keyboardType="number-pad"
-                returnKeyType="next"
-                maxLength={4}
-              />
-
-              <Text style={styles.inputLabel}>Expiry (MM/YY)</Text>
-              <TextInput
-                style={styles.input}
-                value={cardExpiry}
-                onChangeText={(value) => {
-                  const digits = value.replace(/\D/g, "").slice(0, 4);
-                  setCardExpiry(
-                    digits.length > 2
-                      ? `${digits.slice(0, 2)}/${digits.slice(2)}`
-                      : digits,
-                  );
-                }}
-                placeholder="12/30"
-                placeholderTextColor="#94a3b8"
-                keyboardType="number-pad"
-                autoCapitalize="none"
-                autoCorrect={false}
-                maxLength={5}
-              />
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.cancelButton]}
-                  onPress={closeCardModal}
-                  disabled={isSavingCard}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.saveButton]}
-                  onPress={handleSaveCard}
-                  disabled={isSavingCard}
-                >
-                  {isSavingCard ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.saveButtonText}>Save card</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.saveButton]}
+                    onPress={handleSaveCard}
+                    disabled={isSavingCard}
+                  >
+                    {isSavingCard ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.saveButtonText}>
+                        {editingCardId ? "Update card" : "Save card"}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
             </View>
           </KeyboardAvoidingView>
         </View>
@@ -2244,146 +2287,142 @@ const createStyles = (isDarkMode: boolean) => {
   });
 };
 
-const modalStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  container: {
-    width: "100%",
-    backgroundColor: "#1e293b",
-    borderRadius: 16,
-    padding: 20,
-    elevation: 5,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 16,
-    textAlign: "center",
-    color: '#fff'
-  },
-  label: {
-    fontSize: 14,
-    color: "#fff",
-    marginBottom: 6,
-    fontWeight: "500",
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 14,
-    fontSize: 16,
-    color: '#C6C9CE'
-  },
-  accountChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    marginRight: 8,
-    backgroundColor: "#f9fafb",
-  },
-  accountChipSelected: {
-    backgroundColor: "#4f46e5",
-    borderColor: "#4f46e5",
-  },
-  accountChipText: {
-    fontSize: 14,
-    color: "#374151",
-  },
-  accountChipTextSelected: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-  buttonContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 10,
-  },
-  button: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  cancelButton: {
-    backgroundColor: "#ef4444",
-    marginRight: 8,
-  },
-  submitButton: {
-    backgroundColor: "#4f46e5",
-    marginLeft: 8,
-  },
-  buttonText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  datePickerButton: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 8,
-  backgroundColor: "#f3f4f6",
-  borderWidth: 1,
-  borderColor: "#e5e7eb",
-  borderRadius: 8,
-  padding: 12,
-  marginBottom: 14,
-},
-datePickerText: {
-  fontSize: 15,
-  color: "#1f2937",
-  fontWeight: "500",
-},
-summaryCard: {
-  backgroundColor: "#f0fdf4",
-  borderWidth: 1,
-  borderColor: "#bbf7d0",
-  borderRadius: 10,
-  padding: 12,
-  marginBottom: 14,
-},
-summaryRow: {
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginVertical: 2,
-},
-summaryLabel: {
-  fontSize: 13,
-  color: "#166534",
-},
-summaryValue: {
-  fontSize: 13,
-  fontWeight: "600",
-  color: "#15803d",
-},
-summaryValueBold: {
-  fontSize: 15,
-  fontWeight: "700",
-  color: "#166534",
-},
-errorText: {
-  color: "#CE1E1E",
-  marginBottom: 15,
-  fontSize: 13,
-},
-buttonTextCancel: {
-  fontWeight: "600",
-  fontSize: 15,
-  color: "#F6F6F7",
-},
+const createModalStyles = (isDarkMode: boolean) => {
+  const cardColor = isDarkMode ? "#1e293b" : "#ffffff";
+  const textColor = isDarkMode ? "#f8fafc" : "#0f172a";
+  const secondaryTextColor = isDarkMode ? "#94a3b8" : "#64748b";
+  const borderColor = isDarkMode ? "#334155" : "#cbd5e1";
 
+  return StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: "rgba(0, 0, 0, 0.6)",
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 20,
+    },
 
+    container: {
+      width: "100%",
+      backgroundColor: cardColor,
+      borderRadius: 16,
+      padding: 20,
+      borderWidth: 1,
+      borderColor,
+      elevation: 5,
+    },
 
-});
+    title: {
+      fontSize: 20,
+      fontWeight: "bold",
+      textAlign: "center",
+      color: textColor,
+      marginBottom: 20,
+    },
+
+    label: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: secondaryTextColor,
+      marginBottom: 6,
+    },
+
+    input: {
+      backgroundColor: isDarkMode ? "#0f172a" : "#f1f5f9",
+      color: textColor,
+      borderWidth: 1,
+      borderColor,
+      borderRadius: 8,
+      padding: 12,
+      fontSize: 16,
+      marginBottom: 15,
+    },
+
+    datePickerButton: {
+      backgroundColor: isDarkMode ? "#0f172a" : "#f1f5f9",
+      borderWidth: 1,
+      borderColor,
+      borderRadius: 8,
+      padding: 12,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 15,
+    },
+
+    datePickerText: {
+      fontSize: 16,
+      color: textColor,
+    },
+
+    summaryCard: {
+      backgroundColor: isDarkMode ? "#0f172a" : "#f8fafc",
+      borderWidth: 1,
+      borderColor,
+      borderRadius: 10,
+      padding: 15,
+      marginTop: 5,
+      marginBottom: 15,
+    },
+
+    summaryLabel: {
+      fontSize: 13,
+      color: secondaryTextColor,
+    },
+
+    summaryValue: {
+      fontSize: 16,
+      fontWeight: "bold",
+      color: textColor,
+    },
+
+    summaryValueBold: {
+      fontSize: 18,
+      fontWeight: "bold",
+      color: textColor,
+    },
+
+    summaryRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 8,
+    },
+
+    buttonContainer: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      gap: 10,
+      marginTop: 5,
+    },
+
+    button: {
+      flex: 1,
+      padding: 12,
+      borderRadius: 8,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+
+    cancelButton: {
+      backgroundColor: isDarkMode ? "#334155" : "#e2e8f0",
+    },
+
+    buttonTextCancel: {
+      color: textColor,
+      fontWeight: "bold",
+    },
+
+    submitButton: {
+      backgroundColor: "#261FB4F6",
+    },
+
+    buttonText: {
+      color: "#ffffff",
+      fontWeight: "bold",
+    },
+  });
+};
 
 const styles = StyleSheet.create({
   analyticsOverlay: {

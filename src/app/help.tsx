@@ -53,14 +53,26 @@ export default function HelpScreen() {
   );
 
   const contactSupport = async () => {
-    const supportUrl = "mailto:support@extrack.app?subject=ExTrack%20Support";
-    const canOpen = await Linking.canOpenURL(supportUrl);
-    if (canOpen) {
-      await Linking.openURL(supportUrl);
-    } else {
+    const email = "extrack961@gmail.com";
+    const subject = encodeURIComponent("ExTrack Support Inquiry");
+    const body = encodeURIComponent("Hello ExTrack Support Team,\n\nI need assistance with: ");
+    const supportUrl = `mailto:${email}?subject=${subject}&body=${body}`;
+
+    try {
+      const canOpen = await Linking.canOpenURL(supportUrl);
+      if (canOpen) {
+        await Linking.openURL(supportUrl);
+      } else {
+        Alert.alert(
+          "Unable to open email",
+          `Please send an email manually to ${email}`,
+        );
+      }
+    } catch (error) {
+      console.error("Error opening email client:", error);
       Alert.alert(
-        "Support unavailable",
-        "Please contact your app administrator for assistance.",
+        "Error",
+        `Could not launch email app. You can reach us directly at ${email}`,
       );
     }
   };
@@ -102,6 +114,8 @@ export default function HelpScreen() {
           <TouchableOpacity
             style={styles.contactButton}
             onPress={contactSupport}
+            accessibilityRole="button"
+            accessibilityLabel="Contact support via email"
           >
             <Text style={styles.contactButtonText}>Contact</Text>
           </TouchableOpacity>
@@ -229,7 +243,7 @@ const createStyles = (isDarkMode: boolean) =>
       marginTop: 3,
     },
     contactButton: {
-      backgroundColor: isDarkMode ? "#dbeafe" : "#ffffff",
+      backgroundColor: isDarkMode ? "#B3CCEC" : "#ffffff",
       borderRadius: 9,
       paddingHorizontal: 11,
       paddingVertical: 9,

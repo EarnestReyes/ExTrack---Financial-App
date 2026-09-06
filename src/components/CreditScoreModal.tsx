@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   Modal,
   View,
@@ -8,7 +8,9 @@ import {
   Animated,
   Easing,
   useColorScheme,
+  Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
   Path,
   Circle,
@@ -16,16 +18,17 @@ import Svg, {
   G,
   Text as SvgText,
 } from "react-native-svg";
+import { getThemePreference } from "../database";
 
 const AnimatedG = Animated.createAnimatedComponent(G);
 
 export interface CreditScoreModalProps {
   visible: boolean;
   onClose: () => void;
-  creditScore: number;
-  paymentHistoryCount: number;
-  activeLoansCount: number;
-  creditUtilizationPct: number;
+  creditScore?: number;
+  paymentHistoryCount?: number;
+  activeLoansCount?: number;
+  creditUtilizationPct?: number;
 }
 
 export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
@@ -37,23 +40,26 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
   creditUtilizationPct = 0,
 }) => {
   const systemColorScheme = useColorScheme();
-  const isDark = systemColorScheme === "dark";
+  const insets = useSafeAreaInsets();
 
-  const theme = {
-    overlayBg: isDark ? "rgba(0, 0, 0, 0.75)" : "rgba(15, 23, 42, 0.65)",
-    contentBg: isDark ? "#1E293B" : "#FFFFFF",
-    dragHandleBg: isDark ? "#475569" : "#E2E8F0",
-    textPrimary: isDark ? "#F8FAFC" : "#0F172A",
-    textSecondary: isDark ? "#94A3B8" : "#64748B",
-    closeBtnBg: isDark ? "#334155" : "#F8FAFC",
-    closeBtnBorder: isDark ? "#475569" : "#F1F5F9",
-    metricBoxBg: isDark ? "#0F172A" : "#F8FAFC",
-    metricBoxBorder: isDark ? "#334155" : "#F1F5F9",
-    gaugeBaseTrack: isDark ? "#334155" : "#E2E8F0",
-    gaugeTick: isDark ? "#475569" : "#CBD5E1",
-    centerCircleFill: isDark ? "#1E293B" : "#FFFFFF",
-    needleShadow: isDark ? "rgba(255, 255, 255, 0.05)" : "rgba(15, 23, 42, 0.08)",
-  };
+  // Initialize state synchronously with local DB preference or system theme
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const savedTheme = getThemePreference();
+    if (savedTheme !== null) {
+      return savedTheme === "dark";
+    }
+    return systemColorScheme === "dark";
+  });
+
+  // Re-sync database preference when modal opens
+  const syncTheme = useCallback(() => {
+    const savedTheme = getThemePreference();
+    if (savedTheme !== null) {
+      setIsDarkMode(savedTheme === "dark");
+    } else {
+      setIsDarkMode(systemColorScheme === "dark");
+    }
+  }, [systemColorScheme]);
 
   const MIN_SCORE = 300;
   const MAX_SCORE = 850;
@@ -171,53 +177,64 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
 
   const tickScores = [300, 450, 580, 670, 740, 850];
 
-  // Interpolates to numeric values instead of string degrees
   const numericRotation = needleAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [-90, 90],
   });
+
+  const styles = useMemo(
+    () => createStyles(isDarkMode, insets.bottom),
+    [isDarkMode, insets.bottom]
+  );
+
+  const themeTokens = useMemo(
+    () => ({
+      gaugeBaseTrack: isDarkMode ? "#334155" : "#E2E8F0",
+      gaugeTick: isDarkMode ? "#475569" : "#CBD5E1",
+      needleShadow: isDarkMode ? "rgba(255, 255, 255, 0.05)" : "rgba(15, 23, 42, 0.08)",
+      centerCircleFill: isDarkMode ? "#1E293B" : "#FFFFFF",
+      textSecondary: isDarkMode ? "#94A3B8" : "#64748B",
+    }),
+    [isDarkMode]
+  );
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
       transparent
+      statusBarTranslucent
+      onShow={syncTheme}
       onRequestClose={onClose}
     >
-      <View style={[styles.analyticsOverlay, { backgroundColor: theme.overlayBg }]}>
+      <View style={styles.analyticsOverlay}>
         <TouchableOpacity
           style={styles.backdropClickable}
           activeOpacity={1}
           onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close analytics overlay"
         />
 
-        <View style={[styles.analyticsContent, { backgroundColor: theme.contentBg }]}>
-          <View style={[styles.dragHandle, { backgroundColor: theme.dragHandleBg }]} />
+        <View style={styles.analyticsContent}>
+          <View style={styles.dragHandle} />
 
           <View style={styles.analyticsHeader}>
             <View>
-              <Text style={[styles.analyticsTitle, { color: theme.textPrimary }]}>
-                Credit Score
-              </Text>
-              <Text style={[styles.analyticsSubtitle, { color: theme.textSecondary }]}>
+              <Text style={styles.analyticsTitle}>Credit Score</Text>
+              <Text style={styles.analyticsSubtitle}>
                 Real-time credit rating analysis
               </Text>
             </View>
 
             <TouchableOpacity
-              style={[
-                styles.analyticsCloseButton,
-                {
-                  backgroundColor: theme.closeBtnBg,
-                  borderColor: theme.closeBtnBorder,
-                },
-              ]}
+              style={styles.analyticsCloseButton}
               onPress={onClose}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Close modal"
             >
-              <Text style={[styles.analyticsCloseText, { color: theme.textSecondary }]}>
-                ✕
-              </Text>
+              <Text style={styles.analyticsCloseText}>✕</Text>
             </TouchableOpacity>
           </View>
 
@@ -227,7 +244,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
               <Path
                 d={describeArc(180, 0)}
                 fill="none"
-                stroke={theme.gaugeBaseTrack}
+                stroke=""
                 strokeWidth={strokeWidth}
                 strokeLinecap="round"
               />
@@ -244,7 +261,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                     y1={inner.y}
                     x2={outer.x}
                     y2={outer.y}
-                    stroke={theme.gaugeTick}
+                    stroke={themeTokens.gaugeTick}
                     strokeWidth={1.5}
                     strokeLinecap="round"
                   />
@@ -260,7 +277,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                     y1={2}
                     x2={2}
                     y2={-needleLength + 2}
-                    stroke={theme.needleShadow}
+                    stroke={themeTokens.needleShadow}
                     strokeWidth={6}
                     strokeLinecap="round"
                   />
@@ -291,7 +308,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 cx={centerX}
                 cy={centerY}
                 r={10}
-                fill={theme.centerCircleFill}
+                fill={themeTokens.centerCircleFill}
                 stroke={currentColor}
                 strokeWidth={4}
               />
@@ -301,7 +318,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 y={centerY + 22}
                 fontSize="11"
                 fontWeight="700"
-                fill={theme.textSecondary}
+                fill={themeTokens.textSecondary}
                 textAnchor="middle"
               >
                 300
@@ -312,7 +329,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 y={24}
                 fontSize="11"
                 fontWeight="700"
-                fill={theme.textSecondary}
+                fill={themeTokens.textSecondary}
                 textAnchor="middle"
               >
                 580
@@ -323,7 +340,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 y={centerY + 22}
                 fontSize="11"
                 fontWeight="700"
-                fill={theme.textSecondary}
+                fill={themeTokens.textSecondary}
                 textAnchor="middle"
               >
                 850
@@ -331,9 +348,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
             </Svg>
 
             <View style={styles.gaugeTextOverlay}>
-              <Text style={[styles.gaugeValue, { color: theme.textPrimary }]}>
-                {displayedScore}
-              </Text>
+              <Text style={styles.gaugeValue}>{displayedScore}</Text>
 
               <View
                 style={[
@@ -360,15 +375,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
           </View>
 
           <View style={styles.cardsRow}>
-            <View
-              style={[
-                styles.metricBox,
-                {
-                  backgroundColor: theme.metricBoxBg,
-                  borderColor: theme.metricBoxBorder,
-                },
-              ]}
-            >
+            <View style={styles.metricBox}>
               <View style={styles.cardHeader}>
                 <View
                   style={[
@@ -376,27 +383,14 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                     { backgroundColor: "#10B981" },
                   ]}
                 />
-                <Text
-                  style={[styles.cardTitle, { color: theme.textSecondary }]}
-                  numberOfLines={1}
-                >
+                <Text style={styles.cardTitle} numberOfLines={1}>
                   Payments
                 </Text>
               </View>
-              <Text style={[styles.cardValue, { color: theme.textPrimary }]}>
-                {paymentHistoryCount}
-              </Text>
+              <Text style={styles.cardValue}>{paymentHistoryCount}</Text>
             </View>
 
-            <View
-              style={[
-                styles.metricBox,
-                {
-                  backgroundColor: theme.metricBoxBg,
-                  borderColor: theme.metricBoxBorder,
-                },
-              ]}
-            >
+            <View style={styles.metricBox}>
               <View style={styles.cardHeader}>
                 <View
                   style={[
@@ -404,27 +398,14 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                     { backgroundColor: "#F97316" },
                   ]}
                 />
-                <Text
-                  style={[styles.cardTitle, { color: theme.textSecondary }]}
-                  numberOfLines={1}
-                >
+                <Text style={styles.cardTitle} numberOfLines={1}>
                   Loans
                 </Text>
               </View>
-              <Text style={[styles.cardValue, { color: theme.textPrimary }]}>
-                {activeLoansCount}
-              </Text>
+              <Text style={styles.cardValue}>{activeLoansCount}</Text>
             </View>
 
-            <View
-              style={[
-                styles.metricBox,
-                {
-                  backgroundColor: theme.metricBoxBg,
-                  borderColor: theme.metricBoxBorder,
-                },
-              ]}
-            >
+            <View style={styles.metricBox}>
               <View style={styles.cardHeader}>
                 <View
                   style={[
@@ -432,16 +413,11 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                     { backgroundColor: "#F6573B" },
                   ]}
                 />
-                <Text
-                  style={[styles.cardTitle, { color: theme.textSecondary }]}
-                  numberOfLines={1}
-                >
+                <Text style={styles.cardTitle} numberOfLines={1}>
                   OPEX
                 </Text>
               </View>
-              <Text style={[styles.cardValue, { color: theme.textPrimary }]}>
-                {creditUtilizationPct}%
-              </Text>
+              <Text style={styles.cardValue}>{creditUtilizationPct}%</Text>
             </View>
           </View>
         </View>
@@ -450,131 +426,154 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  analyticsOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  backdropClickable: {
-    ...StyleSheet.absoluteFill,
-  },
-  analyticsContent: {
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: 40,
-    shadowColor: "#000000",
-    shadowOffset: {
-      width: 0,
-      height: -10,
+export default CreditScoreModal;
+
+const createStyles = (isDarkMode: boolean, bottomInset: number) => {
+  const contentBg = isDarkMode ? "#1E293B" : "#FFFFFF";
+  const dragHandleBg = isDarkMode ? "#475569" : "#E2E8F0";
+  const textPrimary = isDarkMode ? "#F8FAFC" : "#0F172A";
+  const textSecondary = isDarkMode ? "#94A3B8" : "#64748B";
+  const closeBtnBg = isDarkMode ? "#334155" : "#F8FAFC";
+  const closeBtnBorder = isDarkMode ? "#475569" : "#F1F5F9";
+  const metricBoxBg = isDarkMode ? "#0F172A" : "#F8FAFC";
+  const metricBoxBorder = isDarkMode ? "#334155" : "#F1F5F9";
+
+  return StyleSheet.create({
+    analyticsOverlay: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: isDarkMode ? "rgba(0, 0, 0, 0.75)" : "rgba(15, 23, 42, 0.65)",
     },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 24,
-  },
-  dragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: 16,
-  },
-  analyticsHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  analyticsTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-  },
-  analyticsSubtitle: {
-    fontSize: 13,
-    fontWeight: "500",
-    marginTop: 2,
-  },
-  analyticsCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-  },
-  analyticsCloseText: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  gaugeContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    height: 215,
-    marginTop: 8,
-  },
-  gaugeTextOverlay: {
-    position: "absolute",
-    top: 117,
-    alignItems: "center",
-  },
-  gaugeValue: {
-    fontSize: 48,
-    fontWeight: "800",
-    letterSpacing: -1,
-  },
-  badgeContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    marginTop: 2,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  gaugeBadgeText: {
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: -0.2,
-  },
-  cardsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
-    marginTop: 16,
-  },
-  metricBox: {
-    flex: 1,
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    alignItems: "flex-start",
-    borderWidth: 1,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-    gap: 6,
-  },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  cardTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  cardValue: {
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: -0.5,
-  },
-});
+    backdropClickable: {
+      ...StyleSheet.absoluteFill,
+    },
+    analyticsContent: {
+      backgroundColor: contentBg,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      paddingHorizontal: 24,
+      paddingTop: 12,
+      paddingBottom: Math.max(bottomInset, Platform.OS === "ios" ? 24 : 16) + 16,
+      shadowColor: "#000000",
+      shadowOffset: { width: 0, height: -10 },
+      shadowOpacity: 0.25,
+      shadowRadius: 20,
+      elevation: 24,
+    },
+    dragHandle: {
+      width: 36,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: dragHandleBg,
+      alignSelf: "center",
+      marginBottom: 16,
+    },
+    analyticsHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 8,
+    },
+    analyticsTitle: {
+      fontSize: 24,
+      fontWeight: "800",
+      letterSpacing: -0.5,
+      color: textPrimary,
+    },
+    analyticsSubtitle: {
+      fontSize: 13,
+      fontWeight: "500",
+      marginTop: 2,
+      color: textSecondary,
+    },
+    analyticsCloseButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+      backgroundColor: closeBtnBg,
+      borderColor: closeBtnBorder,
+    },
+    analyticsCloseText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: textSecondary,
+    },
+    gaugeContainer: {
+      alignItems: "center",
+      justifyContent: "center",
+      height: 215,
+      marginTop: 8,
+    },
+    gaugeTextOverlay: {
+      position: "absolute",
+      top: 117,
+      alignItems: "center",
+    },
+    gaugeValue: {
+      fontSize: 48,
+      fontWeight: "800",
+      letterSpacing: -1,
+      color: textPrimary,
+    },
+    badgeContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+      borderRadius: 20,
+      marginTop: 2,
+    },
+    statusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      marginRight: 6,
+    },
+    gaugeBadgeText: {
+      fontSize: 12,
+      fontWeight: "700",
+      letterSpacing: -0.2,
+    },
+    cardsRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      gap: 10,
+      marginTop: 16,
+    },
+    metricBox: {
+      flex: 1,
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 12,
+      alignItems: "flex-start",
+      borderWidth: 1,
+      backgroundColor: metricBoxBg,
+      borderColor: metricBoxBorder,
+    },
+    cardHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 8,
+      gap: 6,
+    },
+    dot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+    },
+    cardTitle: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: textSecondary,
+    },
+    cardValue: {
+      fontSize: 20,
+      fontWeight: "800",
+      letterSpacing: -0.5,
+      color: textPrimary,
+    },
+  });
+};
