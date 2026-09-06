@@ -1390,7 +1390,7 @@ const openInformation = () => {
                 onValueChange={(val) => {
                   if (!val) {
                     Alert.alert(
-                      "Notification Under Pilot Mode",
+                      "Notification",
                       "This is under pilot mode, Thank you for your understanding!"
                     );
                   } else {
