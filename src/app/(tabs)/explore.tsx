@@ -1387,9 +1387,16 @@ const openInformation = () => {
               </View>
               <Switch
                 value={profile.isNotificationEnabled}
-                onValueChange={(val) =>
-                  handleTogglePreference("isNotificationEnabled", val)
-                }
+                onValueChange={(val) => {
+                  if (!val) {
+                    Alert.alert(
+                      "Notification Under Pilot Mode",
+                      "This is under pilot mode, Thank you for your understanding!"
+                    );
+                  } else {
+                    handleTogglePreference("isNotificationEnabled", val);
+                  }
+                }}
                 trackColor={{ false: "#767577", true: "#1e3a8a" }}
               />
             </View>
