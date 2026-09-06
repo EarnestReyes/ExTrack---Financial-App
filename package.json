@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@emailjs/browser": "^4.4.1",
     "@expo/ui": "~57.0.15",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -29,6 +30,7 @@
     "expo-system-ui": "~57.0.3",
     "expo-web-browser": "~57.0.2",
     "firebase": "^12.18.0",
+    "nodemailer": "^10.0.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",

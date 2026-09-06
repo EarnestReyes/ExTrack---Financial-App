@@ -1,6 +1,7 @@
 import DefaultAvatar from "@/assets/images/default-avatar.png";
 import { auth, db } from "@/config/firebase";
 import { useFocusEffect, useRouter } from "expo-router";
+import { sendNegativeBalanceEmail } from "../../services/emailService";
 import {
   collection,
   doc,
@@ -21,6 +22,7 @@ import {
   Modal,
   Platform,
   PanResponder,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -42,7 +44,7 @@ import {
   initDatabase,
   insertTransactionToDB,
   LoanItem,
-  setThemePreference, // <--- Change this
+  setThemePreference,
   TransactionItem,
   updateTransactionInDB
 } from "../../database";
@@ -55,13 +57,13 @@ interface GraphDataItem {
 
 const { width, height } = Dimensions.get("window");
 
- const overviewPeriods = ["Day", "Week", "Month", "Year"] as const;
-  type OverviewPeriod = (typeof overviewPeriods)[number];
+const overviewPeriods = ["Day", "Week", "Month", "Year"] as const;
+type OverviewPeriod = (typeof overviewPeriods)[number];
 
 export default function HomeScreen() {
-
   const [showTransactionsModal, setShowTransactionsModal] = useState(false);
   const [showLoansModal, setShowLoansModal] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const INITIAL_COUNT = 3;
 
   const router = useRouter();
@@ -83,7 +85,7 @@ export default function HomeScreen() {
   const [type, setType] = useState<"Income" | "Expense">("Expense");
   const [category, setCategory] = useState("");
 
-// View States
+  // View States
   const [filter, setFilter] = useState("All");
   const [overviewPeriod, setOverviewPeriod] = useState<
     "Day" | "Week" | "Month" | "Year"
@@ -91,22 +93,34 @@ export default function HomeScreen() {
   const [balancePeriod, setBalancePeriod] =
     useState<typeof overviewPeriod>("Day");
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-  // 1. Updated state type to LoanItem[] and standard camelCase naming
+  
+  // Clean single-source loan state declarations (duplicates removed)
   const [loans, setLoanList] = useState<LoanItem[]>([]);
   const [selectedLoan, setSelectedLoan] = useState<LoanItem | null>(null);
-  const [loan, setLoans] = useState<LoanItem[]>([]);
-  const [selectedLoans, setSelectedLoans] = useState<LoanItem | null>(null);
 
   const [selectedTransaction, setSelectedTransaction] =
     useState<TransactionItem | null>(null);
-  
 
- 
+  // Guard ref to ensure negative balance email is sent only once per negative cycle
+  const emailAlertSentRef = useRef(false);
+
+  const handleTriggerEmail = async (balance: number) => {
+    if (!currentUser?.email) return;
+    const success = await sendNegativeBalanceEmail({
+      email: currentUser.email,
+      userName: currentUser.displayName || "User",
+      balance: balance,
+    });
+
+    if (success) {
+      console.log("Alert email dispatched.");
+    }
+  };
 
   useEffect(() => {
     initDatabase();
     loadTransactions();
-    loadLoans(); // 2. Call loadLoans on component mount
+    loadLoans();
 
     if (currentUser) {
       processAutomaticLoanPayments();
@@ -122,18 +136,41 @@ export default function HomeScreen() {
         setIsDarkMode(systemColorScheme === "dark");
       }
 
-      // Fetch profile picture from local DB fallback immediately on screen focus
       const localPic = getUserProfilePicture();
       if (localPic) {
         setProfilePic(localPic);
       }
 
-      // Load loans on focus (loadTransactions removed to prevent overwrite of Firestore real-time listener)
       loadLoans();
     }, [systemColorScheme]),
   );
 
-  // Real-time listener for Firestore Profile Picture / Transactions / Loans
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const savedTheme = getThemePreference();
+      if (savedTheme !== null) {
+        setIsDarkMode(savedTheme === "dark");
+      }
+
+      const localPic = getUserProfilePicture();
+      if (localPic) {
+        setProfilePic(localPic);
+      }
+
+      loadTransactions();
+      loadLoans();
+
+      if (currentUser) {
+        await processAutomaticLoanPayments();
+      }
+    } catch (error) {
+      console.error("Failed to refresh data:", error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [currentUser, systemColorScheme]);
+
   const formatProfilePicUri = (rawPic: string | null): string | null => {
     if (!rawPic) return null;
     const trimmed = rawPic.trim();
@@ -148,16 +185,13 @@ export default function HomeScreen() {
     return `data:image/jpeg;base64,${trimmed}`;
   };
 
-  // ==========================================
   // Real-time Firestore Listeners
-  // ==========================================
   useEffect(() => {
     if (!currentUser) return;
 
     const userPath = `users/${currentUser.uid}`;
     const userDocRef = doc(db, "users", currentUser.uid);
 
-    // 1. Real-time Firestore Listener for User Profile Updates
     const unsubscribeUserDoc = onSnapshot(
       userDocRef,
       (docSnap) => {
@@ -175,7 +209,6 @@ export default function HomeScreen() {
       },
     );
 
-    // 2. Real-time Listener for Transactions
     const transactionsRef = collection(db, userPath, "transactions");
     const unsubscribeTransactions = onSnapshot(
       transactionsRef,
@@ -201,7 +234,6 @@ export default function HomeScreen() {
           return dateB - dateA;
         });
 
-        // Update React state directly with remote data
         setTransactions(remoteData);
       },
       (error) => {
@@ -209,7 +241,6 @@ export default function HomeScreen() {
       },
     );
 
-    // 3. Real-time Listener for Loans
     const loansRef = collection(db, userPath, "loans");
     const unsubscribeLoans = onSnapshot(
       loansRef,
@@ -256,7 +287,7 @@ export default function HomeScreen() {
 
   const loadLoans = () => {
     const dbData = fetchLoansFromDB();
-    setLoans(dbData);
+    setLoanList(dbData);
   };
 
   const formatAmountInput = (value: string) => {
@@ -304,7 +335,7 @@ export default function HomeScreen() {
 
     const transaction = {
       id: editingTransactionId,
-      firestoreId: existingTransaction?.firestoreId, // Pass the Firestore Document ID
+      firestoreId: existingTransaction?.firestoreId,
       name,
       amount: numericAmount,
       type,
@@ -351,10 +382,13 @@ export default function HomeScreen() {
     setCategory("");
   };
 
-  // Calculations
-  const totalIncome = transactions
-    .filter((t) => t.type === "Income")
-    .reduce((total, t) => total + t.amount, 0);
+  // Calculations with safe rounding precision
+  const totalIncome = Number(
+    transactions
+      .filter((t) => t.type === "Income")
+      .reduce((total, t) => total + t.amount, 0)
+      .toFixed(2)
+  );
 
   const totalExpenses = Number(
     transactions
@@ -364,6 +398,18 @@ export default function HomeScreen() {
   );
 
   const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
+
+  // Negative balance email trigger effect
+  useEffect(() => {
+    if (availableBalance < 0 && currentUser?.email && !emailAlertSentRef.current) {
+      handleTriggerEmail(availableBalance);
+      emailAlertSentRef.current = true;
+    }
+    
+    if (availableBalance >= 0) {
+      emailAlertSentRef.current = false;
+    }
+  }, [availableBalance, currentUser]);
 
   // Chart Data Processing
   const today = new Date();
@@ -571,27 +617,25 @@ export default function HomeScreen() {
   };
 
   const handleDeleteSelectedTransaction = async () => {
-  if (!selectedTransaction?.id) return;
+    if (!selectedTransaction?.id) return;
 
-  try {
-    // Pass local id, Firestore transaction document ID, and loanId
-    await deleteTransactionFromDB(
-      selectedTransaction.id,
-      selectedTransaction.firestoreId,
-      selectedTransaction.loanId
-    );
+    try {
+      await deleteTransactionFromDB(
+        selectedTransaction.id,
+        selectedTransaction.firestoreId,
+        selectedTransaction.loanId
+      );
 
-    // Update local React state to reflect immediate deletion
-    setTransactions((current) =>
-      current.filter((t) => t.id !== selectedTransaction.id)
-    );
+      setTransactions((current) =>
+        current.filter((t) => t.id !== selectedTransaction.id)
+      );
 
-    closeTransactionActions();
-  } catch (error) {
-    console.error("Failed to delete transaction:", error);
-    Alert.alert("Error", "Failed to delete transaction from all records.");
-  }
-};
+      closeTransactionActions();
+    } catch (error) {
+      console.error("Failed to delete transaction:", error);
+      Alert.alert("Error", "Failed to delete transaction from all records.");
+    }
+  };
 
   // Draggable FAB with Gesture Distance Check
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -651,9 +695,7 @@ export default function HomeScreen() {
 
     try {
       const loansRef = collection(db, "users", currentUser.uid, "loans");
-
       const loansSnapshot = await getDocs(loansRef);
-
       const transactionsRef = collection(
         db,
         "users",
@@ -662,7 +704,6 @@ export default function HomeScreen() {
       );
 
       const now = new Date();
-
       const todayYear = now.getFullYear();
       const todayMonth = now.getMonth();
       const todayDay = now.getDate();
@@ -673,11 +714,8 @@ export default function HomeScreen() {
         String(todayDay).padStart(2, "0"),
       ].join("-");
 
-      console.log(`Checking loans for ${todayString}`);
-
       for (const loanDoc of loansSnapshot.docs) {
         const loan = loanDoc.data();
-
         const monthlyPayment = Number(loan.totalAmount);
         const durationMonths = Number(loan.durationMonths);
 
@@ -692,54 +730,20 @@ export default function HomeScreen() {
         }
 
         const startDate = new Date(loan.startDate);
-
-        if (isNaN(startDate.getTime())) {
-          console.log(`Invalid start date for loan ${loanDoc.id}`);
-          continue;
-        }
+        if (isNaN(startDate.getTime())) continue;
 
         const loanStartYear = startDate.getFullYear();
         const loanStartMonth = startDate.getMonth();
         const paymentDay = startDate.getDate();
 
-        /*
-         * IMPORTANT:
-         * Only create a payment when TODAY is the payment day.
-         *
-         * Example:
-         * Loan date = September 4
-         *
-         * September 4  -> payment
-         * September 5  -> nothing
-         * September 20 -> nothing
-         * October 4     -> payment
-         * November 4    -> payment
-         */
+        if (todayDay !== paymentDay) continue;
 
-        if (todayDay !== paymentDay) {
-          continue;
-        }
-
-        // Calculate which month/payment this is
         const monthsSinceStart =
           (todayYear - loanStartYear) * 12 + (todayMonth - loanStartMonth);
-
         const paymentNumber = monthsSinceStart + 1;
 
-        // Loan hasn't started yet
-        if (paymentNumber <= 0) {
-          continue;
-        }
+        if (paymentNumber <= 0 || paymentNumber > durationMonths) continue;
 
-        // Loan is already finished
-        if (paymentNumber > durationMonths) {
-          console.log(`${loan.title}: All loan payments completed.`);
-          continue;
-        }
-
-        /*
-         * CHECK IF THIS MONTH'S PAYMENT ALREADY EXISTS
-         */
         const paymentQuery = query(
           transactionsRef,
           where("loanId", "==", loanDoc.id),
@@ -747,20 +751,9 @@ export default function HomeScreen() {
         );
 
         const existingPaymentSnapshot = await getDocs(paymentQuery);
+        if (!existingPaymentSnapshot.empty) continue;
 
-        // Prevent duplicate payment
-        if (!existingPaymentSnapshot.empty) {
-          console.log(
-            `${loan.title}: Payment #${paymentNumber} already recorded.`,
-          );
-          continue;
-        }
-
-        /*
-         * CREATE ONLY ONE PAYMENT
-         */
         const transactionRef = doc(transactionsRef);
-
         await setDoc(transactionRef, {
           id: Date.now(),
           name: `${loan.title} Loan Payment`,
@@ -769,24 +762,13 @@ export default function HomeScreen() {
           category: "Bills",
           date: todayString,
           time: now.toTimeString().slice(0, 5),
-
-          // Loan information
           loanId: loanDoc.id,
           loanPaymentDate: todayString,
           loanPaymentNumber: paymentNumber,
-
-          // Mark as automatic
           automatic: true,
-
           createdAt: new Date().toISOString(),
         });
-
-        console.log(
-          `Created payment #${paymentNumber} for ${loan.title}: ₱${monthlyPayment}`,
-        );
       }
-
-      console.log("Loan payment check completed.");
     } catch (error) {
       console.error("Error processing automatic loan payments:", error);
     }
@@ -802,21 +784,15 @@ export default function HomeScreen() {
     const numericId = selectedLoan.id ? Number(selectedLoan.id) : undefined;
     const firestoreId = selectedLoan.firestoreId;
 
-    // 1. Check if at least ONE valid identifier exists
     const hasValidNumericId =
       numericId !== undefined && !isNaN(numericId) && numericId > 0;
     const hasValidFirestoreId = Boolean(firestoreId);
 
     if (!hasValidNumericId && !hasValidFirestoreId) {
       Alert.alert("Error", "Invalid Loan ID. Cannot delete this record.");
-      console.error(
-        "Delete failed: No valid loan ID provided ->",
-        selectedLoan,
-      );
       return;
     }
 
-    // 2. Prompt confirmation and execute deletion
     Alert.alert(
       "Delete Loan",
       "Are you sure you want to delete this active loan?",
@@ -827,11 +803,9 @@ export default function HomeScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // Call updated database function passing both potential keys
               await deleteLoanFromDB(numericId, firestoreId);
 
-              // Update UI local state immediately
-              setLoans((current: LoanItem[]) =>
+              setLoanList((current: LoanItem[]) =>
                 current.filter((l: LoanItem) => {
                   if (firestoreId && l.firestoreId === firestoreId)
                     return false;
@@ -857,6 +831,14 @@ export default function HomeScreen() {
         style={styles.dashboardContainer}
         contentContainerStyle={styles.dashboardContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={isDarkMode ? "#ffffff" : "#3b82f6"}
+            colors={["#3b82f6"]}
+          />
+        }
       >
         {/* HEADER */}
         <View style={styles.headerRow}>
@@ -865,7 +847,6 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>Personal Finance Tracker</Text>
           </View>
 
-          {/* TouchableOpacity pointing to index.tsx */}
           <TouchableOpacity
             style={styles.profileButton}
             onPress={() => router.push("/explore")}
@@ -882,30 +863,30 @@ export default function HomeScreen() {
         </View>
 
         {/* BALANCE CARD */}
-          <View style={styles.balanceCard}>
-            <Text style={styles.balanceLabel}>Available Balance</Text>
-            <Text style={[styles.balance, availableBalance < 0 && { color: "#ef4444" }]}>
-              ₱
-              {availableBalance.toLocaleString("en-PH", {
-                minimumFractionDigits: 2,
-              })}
-            </Text>
+        <View style={styles.balanceCard}>
+          <Text style={styles.balanceLabel}>Available Balance</Text>
+          <Text style={[styles.balance, availableBalance < 0 && { color: "#ef4444" }]}>
+            ₱
+            {availableBalance.toLocaleString("en-PH", {
+              minimumFractionDigits: 2,
+            })}
+          </Text>
 
-            <View style={styles.statsRow}>
-              <View>
-                <Text style={styles.statsLabel}>Incoming</Text>
-                <Text style={styles.incomeText}>
-                  +₱{totalIncome.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                </Text>
-              </View>
-              <View>
-                <Text style={styles.statsLabel}>Outgoing</Text>
-                <Text style={styles.expenseText}>
-                  -₱{totalExpenses.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                </Text>
-              </View>
+          <View style={styles.statsRow}>
+            <View>
+              <Text style={styles.statsLabel}>Incoming</Text>
+              <Text style={styles.incomeText}>
+                +₱{totalIncome.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+            <View>
+              <Text style={styles.statsLabel}>Outgoing</Text>
+              <Text style={styles.expenseText}>
+                -₱{totalExpenses.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+              </Text>
             </View>
           </View>
+        </View>
 
         {/* LINE CHART SECTION */}
         <View style={styles.sectionHeader}>
@@ -992,117 +973,24 @@ export default function HomeScreen() {
         </View>
 
         <Text style={styles.spendingOverviewDescription}>
-        Description: {spendingOverviewDescription}
-      </Text>
+          Description: {spendingOverviewDescription}
+        </Text>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Balance Overview</Text>
-      </View>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Balance Overview</Text>
+        </View>
 
-      {/* OVERVIEW PERIOD FILTERS */}
-      <View style={styles.overviewFilterContainer}>
-        {overviewPeriods.map((period) => {
-          const isActive = balancePeriod === period;
-
-          return (
-            <TouchableOpacity
-              key={`balance-${period}`}
-              style={[
-                styles.overviewFilter,
-                isActive && styles.overviewFilterActive,
-              ]}
-              onPress={() => setBalancePeriod(period)}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[
-                  styles.filterText,
-                  isActive && styles.filterTextActive,
-                ]}
-              >
-                {period}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={[styles.balanceTrendLabel, { color: balanceTrendColor }]}>
-        {balanceTrendLabel}
-      </Text>
-
-      {/* CHART CONTAINER */}
-      <View style={styles.chartCard}>
-        {balanceDisplayValues.length > 0 ? (
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            style={styles.balanceChartScroll}
-            contentContainerStyle={styles.balanceChartContent}
-          >
-            <LineChart
-              key={`balance-chart-${balancePeriod}-${balanceDisplayValues.join(",")}`}
-              data={{
-                labels: balanceDisplayLabels.map((label) =>
-                  label === "Start" ? label : formatChartLabel(label, balancePeriod)
-                ),
-                datasets: [
-                  {
-                    data: balanceDisplayValues,
-                    color: () => balanceTrendColor,
-                  },
-                ],
-              }}
-              width={balanceChartWidth}
-              height={180}
-              fromZero={false}
-              getDotColor={(value) => (value >= 0 ? "#22c55e" : "#ef4444")}
-              chartConfig={{
-                backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
-                backgroundGradientFrom: isDarkMode ? "#1e293b" : "#ffffff",
-                backgroundGradientTo: isDarkMode ? "#1e293b" : "#ffffff",
-                decimalPlaces: 0,
-                color: () => balanceTrendColor,
-                labelColor: (opacity = 1) =>
-                  isDarkMode
-                    ? `rgba(148, 163, 184, ${opacity})`
-                    : `rgba(100, 116, 139, ${opacity})`,
-                propsForDots: { r: "4", strokeWidth: "2" },
-                style: { borderRadius: 16 },
-              }}
-              bezier
-              style={{ marginVertical: 8, borderRadius: 16 }}
-            />
-          </ScrollView>
-        ) : (
-          <Text style={styles.emptyText}>
-            Add transactions to track balance
-          </Text>
-        )}
-      </View>
-
-        {/* RECENT TRANSACTIONS CONTAINER */}
-        <View style={styles.cardContainer}>
-          {/* RECENT TRANSACTIONS HEADER */}
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-          </View>
-
-        
-        {/* FILTERS */}
         <View style={styles.overviewFilterContainer}>
-          {["All", "Income", "Expense"].map((f) => {
-            const isActive = filter === f;
-
+          {overviewPeriods.map((period) => {
+            const isActive = balancePeriod === period;
             return (
               <TouchableOpacity
-                key={f}
+                key={`balance-${period}`}
                 style={[
                   styles.overviewFilter,
                   isActive && styles.overviewFilterActive,
                 ]}
-                onPress={() => setFilter(f)}
+                onPress={() => setBalancePeriod(period)}
                 activeOpacity={0.7}
               >
                 <Text
@@ -1111,14 +999,99 @@ export default function HomeScreen() {
                     isActive && styles.filterTextActive,
                   ]}
                 >
-                  {f}
+                  {period}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
-          {/* LIST TRANSACTIONS */}
+        <Text style={[styles.balanceTrendLabel, { color: balanceTrendColor }]}>
+          {balanceTrendLabel}
+        </Text>
+
+        <View style={styles.chartCard}>
+          {balanceDisplayValues.length > 0 ? (
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              style={styles.balanceChartScroll}
+              contentContainerStyle={styles.balanceChartContent}
+            >
+              <LineChart
+                key={`balance-chart-${balancePeriod}-${balanceDisplayValues.join(",")}`}
+                data={{
+                  labels: balanceDisplayLabels.map((label) =>
+                    label === "Start" ? label : formatChartLabel(label, balancePeriod)
+                  ),
+                  datasets: [
+                    {
+                      data: balanceDisplayValues,
+                      color: () => balanceTrendColor,
+                    },
+                  ],
+                }}
+                width={balanceChartWidth}
+                height={180}
+                fromZero={false}
+                getDotColor={(value) => (value >= 0 ? "#22c55e" : "#ef4444")}
+                chartConfig={{
+                  backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
+                  backgroundGradientFrom: isDarkMode ? "#1e293b" : "#ffffff",
+                  backgroundGradientTo: isDarkMode ? "#1e293b" : "#ffffff",
+                  decimalPlaces: 0,
+                  color: () => balanceTrendColor,
+                  labelColor: (opacity = 1) =>
+                    isDarkMode
+                      ? `rgba(148, 163, 184, ${opacity})`
+                      : `rgba(100, 116, 139, ${opacity})`,
+                  propsForDots: { r: "4", strokeWidth: "2" },
+                  style: { borderRadius: 16 },
+                }}
+                bezier
+                style={{ marginVertical: 8, borderRadius: 16 }}
+              />
+            </ScrollView>
+          ) : (
+            <Text style={styles.emptyText}>
+              Add transactions to track balance
+            </Text>
+          )}
+        </View>
+
+        {/* RECENT TRANSACTIONS CONTAINER */}
+        <View style={styles.cardContainer}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          </View>
+
+          <View style={styles.overviewFilterContainer}>
+            {["All", "Income", "Expense"].map((f) => {
+              const isActive = filter === f;
+              return (
+                <TouchableOpacity
+                  key={f}
+                  style={[
+                    styles.overviewFilter,
+                    isActive && styles.overviewFilterActive,
+                  ]}
+                  onPress={() => setFilter(f)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.filterText,
+                      isActive && styles.filterTextActive,
+                    ]}
+                  >
+                    {f}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
           {filteredTransactions.length > 0 ? (
             filteredTransactions.slice(0, INITIAL_COUNT).map((item) => (
               <TouchableOpacity
@@ -1159,7 +1132,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* SEE MORE BUTTON (OPENS TRANSACTIONS MODAL) */}
           {filteredTransactions.length > INITIAL_COUNT && (
             <TouchableOpacity
               style={styles.seeMoreButton}
@@ -1205,7 +1177,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             ))}
 
-            {/* SEE MORE BUTTON (OPENS LOANS MODAL) */}
             {loans.length > INITIAL_COUNT && (
               <TouchableOpacity
                 style={styles.seeMoreButton}
@@ -1217,7 +1188,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* ALL TRANSACTIONS SCROLLABLE MODAL FORM */}
+        {/* TRANSACTIONS MODAL */}
         <Modal
           visible={showTransactionsModal}
           animationType="slide"
@@ -1278,7 +1249,7 @@ export default function HomeScreen() {
           </View>
         </Modal>
 
-        {/* ALL LOANS SCROLLABLE MODAL FORM */}
+        {/* LOANS MODAL */}
         <Modal
           visible={showLoansModal}
           animationType="slide"
@@ -1348,7 +1319,6 @@ export default function HomeScreen() {
                 {(selectedLoan?.totalAmount ?? 0).toLocaleString()}
               </Text>
 
-              {/* DELETE BUTTON */}
               <TouchableOpacity
                 style={styles.actionModalDeleteButton}
                 onPress={handleDeleteSelectedLoan}
@@ -1356,7 +1326,6 @@ export default function HomeScreen() {
                 <Text style={styles.actionModalDeleteText}>Delete loan</Text>
               </TouchableOpacity>
 
-              {/* CANCEL BUTTON */}
               <TouchableOpacity
                 style={styles.actionModalCancelButton}
                 onPress={closeLoanActions}
@@ -1368,6 +1337,7 @@ export default function HomeScreen() {
         </Modal>
       </ScrollView>
 
+      {/* TRANSACTION ACTIONS MODAL */}
       <Modal
         visible={selectedTransaction !== null}
         animationType="fade"
@@ -1420,8 +1390,7 @@ export default function HomeScreen() {
         <Text style={styles.fabIcon}>+</Text>
       </Animated.View>
 
-      {/* ADD TRANSACTION MODAL */}
-      {/* ADD TRANSACTION MODAL */}
+      {/* ADD / EDIT TRANSACTION MODAL */}
       <Modal visible={showForm} animationType="slide" transparent>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1438,7 +1407,6 @@ export default function HomeScreen() {
                   {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
                 </Text>
 
-                {/* TYPE SWITCHER */}
                 <View style={styles.typeContainer}>
                   <TouchableOpacity
                     style={[
@@ -1543,7 +1511,7 @@ export default function HomeScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-      </SafeAreaView>
+    </SafeAreaView>
   );
 }
 
@@ -1600,14 +1568,6 @@ const createStyles = (isDarkMode: boolean) => {
     profileAvatar: {
       width: "100%",
       height: "100%",
-    },
-    themeToggleContainer: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
-    themeToggleLabel: {
-      fontSize: 18,
-      marginRight: 6,
     },
     balanceCard: {
       backgroundColor: cardColor,
@@ -1715,23 +1675,6 @@ const createStyles = (isDarkMode: boolean) => {
       marginTop: -4,
       marginBottom: 16,
       paddingHorizontal: 4,
-    },
-    filterContainer: {
-      flexDirection: "row",
-      marginBottom: 14,
-    },
-    filterChip: {
-      paddingHorizontal: 16,
-      paddingVertical: 6,
-      borderRadius: 20,
-      backgroundColor: cardColor,
-      marginRight: 8,
-      borderWidth: 1,
-      borderColor,
-    },
-    filterChipActive: {
-      backgroundColor: "#3b82f6",
-      borderColor: "#3b82f6",
     },
     filterText: {
       fontSize: 13,
@@ -1982,7 +1925,6 @@ const createStyles = (isDarkMode: boolean) => {
       color: "#ffffff",
       fontWeight: "600",
     },
-
     cardContainer: {
       backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
       borderRadius: 18,
