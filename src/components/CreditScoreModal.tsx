@@ -17,6 +17,8 @@ import Svg, {
   Text as SvgText,
 } from "react-native-svg";
 
+const AnimatedG = Animated.createAnimatedComponent(G);
+
 export interface CreditScoreModalProps {
   visible: boolean;
   onClose: () => void;
@@ -63,7 +65,6 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
 
   const [displayedScore, setDisplayedScore] = useState(MIN_SCORE);
 
-  // Animated values
   const textScoreAnim = useRef(new Animated.Value(MIN_SCORE)).current;
   const needleAnim = useRef(new Animated.Value(0)).current;
 
@@ -76,7 +77,8 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
       setDisplayedScore(MIN_SCORE);
 
       listenerId = textScoreAnim.addListener(({ value }) => {
-        setDisplayedScore(Math.round(value));
+        const rounded = Math.round(value);
+        setDisplayedScore((prev) => (prev !== rounded ? rounded : prev));
       });
 
       const targetRatio = (clampedScore - MIN_SCORE) / (MAX_SCORE - MIN_SCORE);
@@ -86,7 +88,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
           toValue: targetRatio,
           duration: 1200,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(textScoreAnim, {
           toValue: clampedScore,
@@ -107,11 +109,6 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
       }
     };
   }, [visible, clampedScore]);
-
-  const needleRotation = needleAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["-90deg", "90deg"],
-  });
 
   const size = 280;
   const centerX = size / 2;
@@ -144,20 +141,8 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
     endAngle: number,
     customRadius = radius
   ) => {
-    const start = polarToCartesian(
-      centerX,
-      centerY,
-      customRadius,
-      startAngle
-    );
-
-    const end = polarToCartesian(
-      centerX,
-      centerY,
-      customRadius,
-      endAngle
-    );
-
+    const start = polarToCartesian(centerX, centerY, customRadius, startAngle);
+    const end = polarToCartesian(centerX, centerY, customRadius, endAngle);
     const largeArcFlag = Math.abs(startAngle - endAngle) > 180 ? 1 : 0;
 
     return `
@@ -169,17 +154,14 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
   };
 
   const getScoreColor = (score: number) => {
-    if (score >= 800) return "#10B981";
-    if (score >= 740) return "#3B82F6";
-    if (score >= 670) return "#10B981";
+    if (score >= 700) return "#10B981";
     if (score >= 580) return "#F59E0B";
     return "#EF4444";
   };
 
   const getScoreRating = (score: number) => {
     if (score >= 800) return "Exceptional";
-    if (score >= 740) return "Very Good";
-    if (score >= 670) return "Good";
+    if (score >= 700) return "Good";
     if (score >= 580) return "Fair";
     return "Poor";
   };
@@ -188,6 +170,12 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
   const needleLength = 82;
 
   const tickScores = [300, 450, 580, 670, 740, 850];
+
+  // Interpolates to numeric values instead of string degrees
+  const numericRotation = needleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-90, 90],
+  });
 
   return (
     <Modal
@@ -239,27 +227,15 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
               <Path
                 d={describeArc(180, 0)}
                 fill="none"
-                stroke={""}
+                stroke={theme.gaugeBaseTrack}
                 strokeWidth={strokeWidth}
                 strokeLinecap="round"
               />
 
               {tickScores.map((score) => {
                 const angle = scoreToAngle(score);
-
-                const outer = polarToCartesian(
-                  centerX,
-                  centerY,
-                  radius + 16,
-                  angle
-                );
-
-                const inner = polarToCartesian(
-                  centerX,
-                  centerY,
-                  radius + 8,
-                  angle
-                );
+                const outer = polarToCartesian(centerX, centerY, radius + 16, angle);
+                const inner = polarToCartesian(centerX, centerY, radius + 8, angle);
 
                 return (
                   <Line
@@ -275,6 +251,42 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 );
               })}
 
+              {/* Fixed Center Point Wrapper */}
+              <G transform={`translate(${centerX}, ${centerY})`}>
+                <AnimatedG rotation={numericRotation as unknown as number}>
+                  {/* Shadow Line */}
+                  <Line
+                    x1={2}
+                    y1={2}
+                    x2={2}
+                    y2={-needleLength + 2}
+                    stroke={theme.needleShadow}
+                    strokeWidth={6}
+                    strokeLinecap="round"
+                  />
+
+                  {/* Main Needle Line */}
+                  <Line
+                    x1={0}
+                    y1={0}
+                    x2={0}
+                    y2={-needleLength}
+                    stroke={currentColor}
+                    strokeWidth={4}
+                    strokeLinecap="round"
+                  />
+
+                  {/* Needle Tip Indicator */}
+                  <Circle
+                    cx={0}
+                    cy={-needleLength}
+                    r={4}
+                    fill={currentColor}
+                  />
+                </AnimatedG>
+              </G>
+
+              {/* Center Hub Circle */}
               <Circle
                 cx={centerX}
                 cy={centerY}
@@ -317,56 +329,6 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 850
               </SvgText>
             </Svg>
-
-            {/* Smooth Animated Needle overlayed to support native driver transforms cleanly */}
-            <View style={StyleSheet.absoluteFill} pointerEvents="none">
-              <Animated.View
-                style={{
-                  position: "absolute",
-                  left: centerX,
-                  top: centerY,
-                  width: 0,
-                  height: 0,
-                  transform: [{ rotate: needleRotation }],
-                }}
-              >
-                <Svg
-                  width={size}
-                  height={190}
-                  viewBox={`0 0 ${size} 190`}
-                  style={{ overflow: "visible", left: -centerX, top: -centerY }}
-                >
-                  <G>
-                    <Line
-                      x1={centerX + 2}
-                      y1={centerY + 2}
-                      x2={centerX + 2}
-                      y2={centerY - needleLength + 2}
-                      stroke={theme.needleShadow}
-                      strokeWidth={6}
-                      strokeLinecap="round"
-                    />
-
-                    <Line
-                      x1={centerX}
-                      y1={centerY}
-                      x2={centerX}
-                      y2={centerY - needleLength}
-                      stroke={currentColor}
-                      strokeWidth={4}
-                      strokeLinecap="round"
-                    />
-
-                    <Circle
-                      cx={centerX}
-                      cy={centerY - needleLength}
-                      r={4}
-                      fill={currentColor}
-                    />
-                  </G>
-                </Svg>
-              </Animated.View>
-            </View>
 
             <View style={styles.gaugeTextOverlay}>
               <Text style={[styles.gaugeValue, { color: theme.textPrimary }]}>
@@ -467,14 +429,14 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
                 <View
                   style={[
                     styles.dot,
-                    { backgroundColor: "#3B82F6" },
+                    { backgroundColor: "#F6573B" },
                   ]}
                 />
                 <Text
                   style={[styles.cardTitle, { color: theme.textSecondary }]}
                   numberOfLines={1}
                 >
-                  Utilization
+                  OPEX
                 </Text>
               </View>
               <Text style={[styles.cardValue, { color: theme.textPrimary }]}>

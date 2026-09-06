@@ -327,26 +327,32 @@ export const fetchTransactionsFromDB = (): TransactionItem[] => {
   );
 };
 
+// ==========================================
+// Fixed Transaction Insert Function
+// ==========================================
 export const insertTransactionToDB = async (
   transaction: TransactionItem
 ): Promise<{ id: number; firestoreId: string }> => {
   initDatabase();
   const user = await getCurrentUser();
 
-  // Pre-generate Firestore ID offline or online
-  const collectionRef = collection(
-    firestoreDb,
-    "users",
-    user?.uid || "pending",
-    "transactions"
-  );
-  const firestoreId = transaction.firestoreId || doc(collectionRef).id;
+  // 1. Sanitize loanId to prevent Android native bridge string coercion
+  const cleanLoanId = 
+    transaction.loanId && 
+    transaction.loanId !== "null" && 
+    transaction.loanId !== "undefined" && 
+    transaction.loanId.trim() !== "" 
+      ? transaction.loanId.trim() 
+      : null;
+
+  // 2. Generate Firestore doc ID safely without creating an orphaned "users/pending" path
+  const firestoreId = transaction.firestoreId || doc(collection(firestoreDb, "_id_generator_")).id;
 
   const result = db.runSync(
     "INSERT INTO transactions (firestoreId, loanId, name, amount, type, category, date, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     [
       firestoreId,
-      transaction.loanId || null,
+      cleanLoanId,
       transaction.name,
       transaction.amount,
       transaction.type,
@@ -365,7 +371,7 @@ export const insertTransactionToDB = async (
     category: transaction.category,
     date: transaction.date,
     time: transaction.time,
-    loanId: transaction.loanId || null,
+    loanId: cleanLoanId,
     createdAt: new Date().toISOString(),
   };
 
@@ -781,6 +787,8 @@ export interface CreditScoreMetrics {
   paymentHistoryCount: number;
   totalLoanAmount: number;
   totalMonthlyPayments: number;
+  totalCurrentBalances: number; // Add this line
+  totalCreditLimits: number;    // Add this line
 }
 
 // ==========================================
@@ -800,11 +808,12 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       paymentHistoryCount: 0,
       totalLoanAmount: 0,
       totalMonthlyPayments: 0,
+      totalCurrentBalances: 0, // Used as Total Monthly Expenses
+      totalCreditLimits: 0,     // Used as Total Monthly Income
     };
   }
 
   const userPath = `users/${user.uid}`;
-  // Use YYYY-MM-DD string comparison to accurately match date-only strings like "2026-09-05"
   const todayStr = new Date().toISOString().split("T")[0];
 
   try {
@@ -823,7 +832,6 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       const monthly = Number(data.monthlyPayment) || 0;
       const endDate = data.endDate;
 
-      // Active if endDate is today/future or not set
       const isActive = !endDate || endDate >= todayStr;
 
       if (isActive) {
@@ -835,33 +843,32 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       }
     });
 
-    // 2. Fetch All Transactions (Avoid Firestore query case-sensitivity & null-field drops)
+    // 2. Fetch Transactions (Calculate Expenses & Income)
     const txRef = collection(firestoreDb, userPath, "transactions");
     const txSnapshot = await getDocs(txRef);
 
     let paymentHistoryCount = 0;
+    let totalExpenses = 0;
+    let totalIncome = 0;
 
     txSnapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      
-      const txType = String(data.type || "").toLowerCase();
-      const category = String(data.category || "").toLowerCase();
-      const loanId = data.loanId;
+      const txType = String(data.type || "").trim().toLowerCase();
+      const amount = Number(data.amount) || 0;
 
-      // Filter strictly for Expense type (handles "Expense" vs "expense")
-      if (txType === "expense") {
-        const hasValidLoanId = loanId !== null && loanId !== undefined && loanId !== "" && loanId !== "null";
-        const isRepaymentCategory =
-          category.includes("loan") ||
-          category.includes("repayment") ||
-          category.includes("debt") ||
-          category.includes("food"); // Add custom category fallbacks if needed
-
-        if (hasValidLoanId || isRepaymentCategory) {
-          paymentHistoryCount++;
-        }
+      if (txType === "expense" || txType === "outflow" || txType === "debit") {
+        paymentHistoryCount++;
+        totalExpenses += amount;
+      } else if (txType === "income" || txType === "inflow" || txType === "credit") {
+        totalIncome += amount;
       }
     });
+
+    // Keeping variable names mapped to your requested expense calculation:
+    // totalCurrentBalances -> Total Monthly Expenses
+    // totalCreditLimits -> Total Monthly Income
+    const totalCurrentBalances = totalExpenses;
+    const totalCreditLimits = totalIncome;
 
     return {
       activeLoansCount,
@@ -869,6 +876,8 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       paymentHistoryCount,
       totalLoanAmount,
       totalMonthlyPayments,
+      totalCurrentBalances,
+      totalCreditLimits,
     };
   } catch (error) {
     console.error("Error fetching credit metrics from Firestore:", error);
@@ -878,6 +887,8 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       paymentHistoryCount: 0,
       totalLoanAmount: 0,
       totalMonthlyPayments: 0,
+      totalCurrentBalances: 0,
+      totalCreditLimits: 0,
     };
   }
 };

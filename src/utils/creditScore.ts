@@ -9,7 +9,7 @@ export interface ComputedCreditData {
   tier: "Excellent" | "Good" | "Fair" | "Poor";
   paymentHistoryCount: number;
   activeLoansCount: number;
-  creditUtilizationPct: number;
+  creditUtilizationPct: number; // Represents Expense-to-Income Percentage
 }
 
 const getScoreTier = (score: number): ComputedCreditData["tier"] => {
@@ -27,16 +27,15 @@ export const calculateCreditScoreFromDB = async (): Promise<ComputedCreditData> 
     const activeLoansCount = Number(metrics?.activeLoansCount) || 0;
     const completedLoansCount = Number(metrics?.completedLoansCount) || 0;
     const paymentHistoryCount = Number(metrics?.paymentHistoryCount) || 0;
-    const totalLoanAmount = Number(metrics?.totalLoanAmount) || 0;
-    const totalMonthlyPayments = Number(metrics?.totalMonthlyPayments) || 0;
 
-    // 2. Compute Credit Utilization
+    // Metrics mapped to expenses and income
+    const totalCurrentBalances = Number(metrics?.totalCurrentBalances) || 0; // Total Expenses
+    const totalCreditLimits = Number(metrics?.totalCreditLimits) || 0;     // Total Income
+
+    // 2. Compute Expense Ratio as a Percentage (Total Expenses / Total Income)
     let creditUtilizationPct = 0;
-    if (totalLoanAmount > 0) {
-      creditUtilizationPct = Math.min(
-        Math.round((totalMonthlyPayments / totalLoanAmount) * 100),
-        100
-      );
+    if (totalCreditLimits > 0) {
+      creditUtilizationPct = Math.round((totalCurrentBalances / totalCreditLimits) * 100);
     }
 
     // 3. Score Calculation (300 to 850 Scale)
@@ -55,8 +54,8 @@ export const calculateCreditScoreFromDB = async (): Promise<ComputedCreditData> 
       calculatedScore -= (activeLoansCount - 2) * 20;
     }
 
-    // Utilization Penalty
-    if (creditUtilizationPct > 30) {
+    // Expense Ratio Penalty (> 50% expense ratio instead of revolving credit penalty)
+    if (creditUtilizationPct > 50) {
       calculatedScore -= 40;
     }
 
@@ -68,7 +67,7 @@ export const calculateCreditScoreFromDB = async (): Promise<ComputedCreditData> 
     getCurrentUser()
       .then((user) => {
         if (user?.uid) {
-          return saveCreditScoreToFirestore(    
+          return saveCreditScoreToFirestore(
             user.uid,
             finalScore,
             tier,
