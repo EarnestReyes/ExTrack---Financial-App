@@ -1,18 +1,16 @@
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
-    Alert,
-    Linking,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
     useColorScheme,
-    RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { getThemePreference } from "../database";
+import ChatSupport from "./ChatSupport"; // Adjust path if needed depending on your folder layout
 
 const faqs = [
   {
@@ -42,6 +40,8 @@ export default function HelpScreen() {
   const systemColorScheme = useColorScheme();
   const [isDarkMode, setIsDarkMode] = useState(systemColorScheme === "dark");
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
+  const [isChatVisible, setIsChatVisible] = useState(false);
+
   const styles = createStyles(isDarkMode);
 
   useFocusEffect(
@@ -52,31 +52,6 @@ export default function HelpScreen() {
       );
     }, [systemColorScheme]),
   );
-
-  const contactSupport = async () => {
-    const email = "extrack961@gmail.com";
-    const subject = encodeURIComponent("ExTrack Support Inquiry");
-    const body = encodeURIComponent("Hello ExTrack Support Team,\n\nI need assistance with: ");
-    const supportUrl = `mailto:${email}?subject=${subject}&body=${body}`;
-
-    try {
-      const canOpen = await Linking.canOpenURL(supportUrl);
-      if (canOpen) {
-        await Linking.openURL(supportUrl);
-      } else {
-        Alert.alert(
-          "Unable to open email",
-          `Please send an email manually to ${email}`,
-        );
-      }
-    } catch (error) {
-      console.error("Error opening email client:", error);
-      Alert.alert(
-        "Error",
-        `Could not launch email app. You can reach us directly at ${email}`,
-      );
-    }
-  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
@@ -108,17 +83,16 @@ export default function HelpScreen() {
           <View style={styles.supportCopy}>
             <Text style={styles.supportTitle}>Need a hand?</Text>
             <Text style={styles.supportText}>
-              Tell us what went wrong and include the screen or action where you
-              noticed it.
+              Chat instantly with our AI assistant to resolve issues or learn app features.
             </Text>
           </View>
           <TouchableOpacity
             style={styles.contactButton}
-            onPress={contactSupport}
+            onPress={() => setIsChatVisible(true)}
             accessibilityRole="button"
-            accessibilityLabel="Contact support via email"
+            accessibilityLabel="Open AI Chat Support"
           >
-            <Text style={styles.contactButtonText}>Contact</Text>
+            <Text style={styles.contactButtonText}>ExTrack AI</Text>
           </TouchableOpacity>
         </View>
 
@@ -171,6 +145,9 @@ export default function HelpScreen() {
 
         <Text style={styles.version}>ExTrack support • Version 1.0.0</Text>
       </ScrollView>
+
+      {/* Extracted Chat Support Modal Component */}
+      <ChatSupport visible={isChatVisible} onClose={() => setIsChatVisible(false)} />
     </SafeAreaView>
   );
 }

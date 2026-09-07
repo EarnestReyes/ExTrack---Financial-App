@@ -10,6 +10,8 @@ import {
   onSnapshot,
   query,
   setDoc,
+  deleteDoc,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -90,6 +92,7 @@ export default function HomeScreen() {
   const [editingTransactionId, setEditingTransactionId] = useState<
     number | undefined
   >();
+  const [editingCardId, setEditingCardId] = useState<string | null>(null); // 👈 Track if editing a card deposit
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [type, setType] = useState<"Income" | "Expense">("Expense");
@@ -423,69 +426,103 @@ export default function HomeScreen() {
     const today = new Date();
     const formattedDate = today.toISOString().split("T")[0];
     const formattedTime = today.toTimeString().split(" ")[0].substring(0, 5);
-    const existingTransaction = transactions.find(
-      (transaction) => transaction.id === editingTransactionId,
-    );
-
-    const transaction = {
-      id: editingTransactionId,
-      firestoreId: existingTransaction?.firestoreId, 
-      name,
-      amount: numericAmount,
-      type,
-      category,
-      date: existingTransaction?.date ?? formattedDate,
-      time: existingTransaction?.time ?? formattedTime,
-      userId: currentUser?.uid,
-    } as TransactionItem;
 
     try {
-      if (editingTransactionId) {
-        await updateTransactionInDB(transaction);
+      // If editing an existing card deposit entry
+      if (editingCardId && currentUser) {
+        const cardDocRef = doc(db, "users", currentUser.uid, "cards", editingCardId);
+        await updateDoc(cardDocRef, {
+          name: name.trim(),
+          amount: numericAmount,
+        });
       } else {
-        await insertTransactionToDB(transaction);
+        const existingTransaction = transactions.find(
+          (transaction) => transaction.id === editingTransactionId,
+        );
+
+        const transaction = {
+          id: editingTransactionId,
+          firestoreId: existingTransaction?.firestoreId, 
+          name,
+          amount: numericAmount,
+          type,
+          category,
+          date: existingTransaction?.date ?? formattedDate,
+          time: existingTransaction?.time ?? formattedTime,
+          userId: currentUser?.uid,
+        } as TransactionItem;
+
+        if (editingTransactionId) {
+          await updateTransactionInDB(transaction);
+        } else {
+          await insertTransactionToDB(transaction);
+        }
       }
 
       setName("");
       setAmount("");
       setCategory("");
       setEditingTransactionId(undefined);
+      setEditingCardId(null);
       setShowForm(false);
     } catch (error) {
-      console.error("Error saving transaction:", error);
-      Alert.alert("Error", "Failed to save transaction.");
+      console.error("Error saving transaction/card:", error);
+      Alert.alert("Error", "Failed to save record.");
     }
   };
 
-  const openEditTransaction = (transaction: TransactionItem) => {
-    setEditingTransactionId(
-      transaction.id ? Number(transaction.id) : undefined,
-    );
-    setName(transaction.name);
+ const openEditTransaction = (transaction: any) => {
+    if (String(transaction.id).startsWith("card-")) {
+      setEditingCardId(transaction.firestoreId);
+      setEditingTransactionId(undefined);
+    } else {
+      setEditingTransactionId(
+        transaction.id ? Number(transaction.id) : undefined,
+      );
+      setEditingCardId(null);
+    }
+
+    // Clean up the name so it strips out "Card Deposit: " and quotes before putting it in the input field
+    let cleanName = transaction.name || "";
+    if (cleanName.startsWith("Card Deposit:")) {
+      cleanName = cleanName.replace("Card Deposit:", "").trim();
+    }
+    cleanName = cleanName.replace(/^["']|["']$/g, ""); // Remove wrapping quotes if any
+
+    setName(cleanName); 
     setAmount(formatAmountInput(`₱${transaction.amount}`));
     setType(transaction.type as "Income" | "Expense");
-    setCategory(transaction.category);
+    setCategory("Savings");
     setShowForm(true);
   };
 
   const closeTransactionForm = () => {
     setShowForm(false);
     setEditingTransactionId(undefined);
+    setEditingCardId(null);
     setName("");
     setAmount("");
     setCategory("");
   };
 
-  // Combine standard transactions and cards formatted as transactions for unified display
+  // Combine standard transactions and cards formatted as transactions safely without duplication
+  // Combine standard transactions and format cards to display as "Card Deposit: [Bank Name]"
   const combinedTransactions = [
-    ...transactions,
+    ...transactions.filter((t) => {
+      // Filter out duplicate or legacy auto-generated card entries if necessary
+      const isCardDepositTransaction = 
+        t.category === "Card" || 
+        t.name?.startsWith("Card Deposit:") || 
+        t.name?.startsWith("Card Balance:");
+      return !isCardDepositTransaction;
+    }),
     ...cards.map((card) => ({
       id: `card-${card.id}`,
       firestoreId: card.id,
-      name: `${card.name} (*${card.lastFour})`,
+      name: `Card Deposit: ${card.name}`,
       amount: card.amount,
       type: "Income" as const,
-      category: "Savings",
+      category: "Deposit",
       date: card.createdAt ? card.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
       time: "00:00",
       userId: currentUser?.uid,
@@ -670,11 +707,11 @@ export default function HomeScreen() {
       ? "Balance increasing"
       : "Balance decreasing";
 
-  const filteredTransactions = combinedTransactions.filter((t) => {
+  const filteredTransactions = combinedTransactions?.filter((t) => {
     if (filter === "Income") return t.type === "Income";
     if (filter === "Expense") return t.type === "Expense";
     return true;
-  });
+  }) ?? [];
 
   const categories =
     type === "Expense"
@@ -735,31 +772,33 @@ export default function HomeScreen() {
   };
 
   const handleDeleteSelectedTransaction = async () => {
-  if (!selectedTransaction?.id) return;
+    if (!selectedTransaction) return;
 
-  if (String(selectedTransaction.id).startsWith("card-")) {
-    Alert.alert("Notice", "Card amounts are managed inside your wallet/card details.");
-    closeTransactionActions();
-    return;
-  }
+    try {
+      if (String(selectedTransaction.id).startsWith("card-")) {
+        // Delete card deposit record from Firestore cards subcollection
+        if (currentUser && selectedTransaction.firestoreId) {
+          const cardDocRef = doc(db, "users", currentUser.uid, "cards", selectedTransaction.firestoreId);
+          await deleteDoc(cardDocRef);
+        }
+      } else {
+        await deleteTransactionFromDB(
+          Number(selectedTransaction.id),
+          selectedTransaction.firestoreId,
+          selectedTransaction.loanId
+        );
 
-  try {
-    await deleteTransactionFromDB(
-      Number(selectedTransaction.id),
-      selectedTransaction.firestoreId,
-      selectedTransaction.loanId
-    );
+        setTransactions((current) =>
+          current.filter((t) => t.id !== selectedTransaction.id)
+        );
+      }
 
-    setTransactions((current) =>
-      current.filter((t) => t.id !== selectedTransaction.id)
-    );
-
-    closeTransactionActions();
-  } catch (error) {
-    console.error("Failed to delete transaction:", error);
-    Alert.alert("Error", "Failed to delete transaction from all records.");
-  }
-};
+      closeTransactionActions();
+    } catch (error) {
+      console.error("Failed to delete transaction:", error);
+      Alert.alert("Error", "Failed to delete record.");
+    }
+  };
 
   // Draggable FAB with Gesture Distance Check
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -1238,10 +1277,10 @@ export default function HomeScreen() {
             })}
           </View>
 
-          {filteredTransactions.length > 0 ? (
+          {Array.isArray(filteredTransactions) && filteredTransactions.length > 0 ? (
             filteredTransactions.slice(0, INITIAL_COUNT).map((item) => (
               <TouchableOpacity
-                key={item.id}
+                key={item?.id ?? Math.random().toString()}
                 style={styles.transactionCard}
                 onPress={() => handleTransactionPress(item)}
                 activeOpacity={0.75}
@@ -1499,24 +1538,23 @@ export default function HomeScreen() {
               {selectedTransaction?.amount.toLocaleString()}
             </Text>
 
-            {!String(selectedTransaction?.id).startsWith("card-") && (
-              <TouchableOpacity
-                style={styles.actionModalEditButton}
-                onPress={() => {
-                  if (selectedTransaction)
-                    openEditTransaction(selectedTransaction);
-                  closeTransactionActions();
-                }}
-              >
-                <Text style={styles.actionModalEditText}>Edit transaction</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.actionModalEditButton}
+              onPress={() => {
+                if (selectedTransaction)
+                  openEditTransaction(selectedTransaction);
+                closeTransactionActions();
+              }}
+            >
+              <Text style={styles.actionModalEditText}>Edit transaction</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.actionModalDeleteButton}
               onPress={handleDeleteSelectedTransaction}
             >
               <Text style={styles.actionModalDeleteText}>
-                {String(selectedTransaction?.id).startsWith("card-") ? "Dismiss" : "Delete transaction"}
+                Delete transaction
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -1551,7 +1589,7 @@ export default function HomeScreen() {
             >
               <View style={styles.modalContent}>
                 <Text style={styles.modalTitle}>
-                  {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
+                  {editingTransactionId || editingCardId ? "Edit Transaction" : "Add Transaction"}
                 </Text>
 
                 <View style={styles.typeContainer}>
@@ -1649,7 +1687,7 @@ export default function HomeScreen() {
                     onPress={handleSaveTransaction}
                   >
                     <Text style={styles.saveButtonText}>
-                      {editingTransactionId ? "Update" : "Save"}
+                      {editingTransactionId || editingCardId ? "Update" : "Save"}
                     </Text>
                   </TouchableOpacity>
                 </View>
