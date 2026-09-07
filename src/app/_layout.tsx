@@ -1,15 +1,28 @@
-import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
-import { Stack, router, useSegments } from 'expo-router';
-import { LogBox, View, ActivityIndicator, AppState, AppStateStatus, StyleSheet } from 'react-native';
-import { onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import * as Notifications from 'expo-notifications';
-import * as LocalAuthentication from 'expo-local-authentication';
-import { auth, db } from '@/config/firebase';
+import { auth, db } from "@/config/firebase";
+import * as LocalAuthentication from "expo-local-authentication";
+import * as Notifications from "expo-notifications";
+import { Stack, router, useSegments } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { User, onAuthStateChanged, signOut } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  AppState,
+  AppStateStatus,
+  Image,
+  LogBox,
+  StyleSheet,
+  View,
+} from "react-native";
+
+// Keep the native splash screen visible while loading resources
+SplashScreen.preventAutoHideAsync();
 
 LogBox.ignoreLogs([
-  'expo-notifications: Android Push notifications',
-  '`expo-notifications` functionality is not fully supported in Expo Go',
+  "expo-notifications: Android Push notifications",
+  "`expo-notifications` functionality is not fully supported in Expo Go",
 ]);
 
 Notifications.setNotificationHandler({
@@ -22,7 +35,10 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const AuthContext = createContext<{ user: User | null; logout: () => Promise<void> }>({
+const AuthContext = createContext<{
+  user: User | null;
+  logout: () => Promise<void>;
+}>({
   user: null,
   logout: async () => {},
 });
@@ -33,23 +49,70 @@ export default function RootLayout() {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
+  const [isAnimationFinished, setIsAnimationFinished] = useState(false);
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.6)).current;
 
   const segments = useSegments();
   const appState = useRef(AppState.currentState);
   const isAuthenticating = useRef(false);
 
-  const notificationListener = useRef<Notifications.EventSubscription | null>(null);
+  const notificationListener = useRef<Notifications.EventSubscription | null>(
+    null,
+  );
   const responseListener = useRef<Notifications.EventSubscription | null>(null);
+
+  // Handle splash screen and custom logo entrance animation
+  useEffect(() => {
+    async function prepare() {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        await SplashScreen.hideAsync();
+
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 3000, // Updated duration to 3 seconds
+            useNativeDriver: true,
+          }),
+          Animated.spring(scaleAnim, {
+            toValue: 1,
+            friction: 6,
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          setIsAnimationFinished(true);
+        });
+      }
+    }
+
+    prepare();
+  }, []);
+
+  // Logout function defined BEFORE it is used in AuthContext.Provider
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setIsLocked(false);
+      router.replace("/");
+    } catch (error) {
+      console.error("Error signing out:", error);
+    }
+  };
 
   // Helper function to handle signout and redirection on cancel/failure
   const handleAuthenticationFailure = async () => {
     try {
       await signOut(auth);
     } catch (error) {
-      console.error('Error during sign out on biometric failure:', error);
+      console.error("Error during sign out on biometric failure:", error);
     } finally {
       setIsLocked(false);
-      router.replace('/');
+      router.replace("/");
     }
   };
 
@@ -64,23 +127,22 @@ export default function RootLayout() {
 
       if (hasHardware && isEnrolled) {
         const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Unlock ExTrack',
-          cancelLabel: 'Cancel',
-          fallbackLabel: 'Use Passcode',
+          promptMessage: "Unlock ExTrack",
+          cancelLabel: "Cancel",
+          fallbackLabel: "Use Passcode",
           disableDeviceFallback: false,
         });
 
         if (result.success) {
           setIsLocked(false);
         } else {
-          // Triggered when user cancels or biometric fails
           await handleAuthenticationFailure();
         }
       } else {
         setIsLocked(false);
       }
     } catch (error) {
-      console.error('Biometric authentication failed:', error);
+      console.error("Biometric authentication failed:", error);
       await handleAuthenticationFailure();
     } finally {
       isAuthenticating.current = false;
@@ -90,7 +152,7 @@ export default function RootLayout() {
   // Helper to check Firestore preference before locking
   const checkAndPromptBiometrics = async (currentUser: User) => {
     try {
-      const userDocRef = doc(db, 'users', currentUser.uid);
+      const userDocRef = doc(db, "users", currentUser.uid);
       const userSnap = await getDoc(userDocRef);
 
       if (userSnap.exists() && userSnap.data()?.isBiometricEnabled) {
@@ -100,7 +162,7 @@ export default function RootLayout() {
         setIsLocked(false);
       }
     } catch (error) {
-      console.error('Error fetching biometric preference:', error);
+      console.error("Error fetching biometric preference:", error);
       setIsLocked(false);
     }
   };
@@ -122,17 +184,17 @@ export default function RootLayout() {
   // AppState Listener (Background/Foreground Re-Auth)
   useEffect(() => {
     const subscription = AppState.addEventListener(
-      'change',
+      "change",
       async (nextAppState: AppStateStatus) => {
         if (
           appState.current.match(/inactive|background/) &&
-          nextAppState === 'active' &&
+          nextAppState === "active" &&
           user
         ) {
           await checkAndPromptBiometrics(user);
         }
         appState.current = nextAppState;
-      }
+      },
     );
 
     return () => subscription.remove();
@@ -152,38 +214,46 @@ export default function RootLayout() {
 
   // Clean Navigation Guard Check
   useEffect(() => {
-    if (initializing || isLocked) return;
+    if (initializing || isLocked || !isAnimationFinished) return;
 
     const currentSegment = segments[0] as string | undefined;
-    const inTabsGroup = currentSegment === '(tabs)';
+    const inTabsGroup = currentSegment === "(tabs)";
 
     const isPublicAuthScreen =
       !currentSegment ||
-      currentSegment === 'index' ||
-      currentSegment === 'register' ||
-      currentSegment === 'forgotPass';
+      currentSegment === "index" ||
+      currentSegment === "register" ||
+      currentSegment === "forgotPass";
 
     if (!user && inTabsGroup) {
-      router.replace('/');
+      router.replace("/");
     } else if (user && isPublicAuthScreen) {
-      router.replace('/(tabs)/home');
+      router.replace("/(tabs)/home");
     }
-  }, [user, initializing, isLocked, segments]);
+  }, [user, initializing, isLocked, isAnimationFinished, segments]);
 
-  const logout = async () => {
-    try {
-      await signOut(auth);
-      setIsLocked(false);
-      router.replace('/');
-    } catch (error) {
-      console.error('Error signing out:', error);
-    }
-  };
-
-  if (initializing || isLocked) {
+  // Show splash animation overlay or biometric loading screen
+  if (initializing || !isAnimationFinished || isLocked) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3b82f6" />
+        {!isAnimationFinished ? (
+          <Animated.View
+            style={[
+              styles.splashContainer,
+              {
+                opacity: fadeAnim,
+                transform: [{ scale: scaleAnim }],
+              },
+            ]}
+          >
+            <Image
+              source={require("../../assets/images/extrack-logo.png")}
+              style={styles.logo}
+            />
+          </Animated.View>
+        ) : (
+          <ActivityIndicator size="large" color="#3b82f6" />
+        )}
       </View>
     );
   }
@@ -203,8 +273,17 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#0f172a',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#051A4B",
+  },
+  splashContainer: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  logo: {
+    width: 130,
+    height: 130,
+    resizeMode: "contain",
   },
 });

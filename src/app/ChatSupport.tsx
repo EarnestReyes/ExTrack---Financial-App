@@ -11,11 +11,12 @@ import {
     Platform,
     ActivityIndicator,
     Keyboard,
+    Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.EXPO_PUBLIC_GOOGLE_API_KEY });
 
 interface Message {
   id: string;
@@ -53,6 +54,7 @@ export default function ChatSupport({ visible, onClose }: ChatSupportProps) {
           - Viewing transaction history and categories.
           - Setting up budgets and spending limits.
           - Accessing AI support chat for troubleshooting.
+          - Earnest Reyes is the developer. He is a BSIT-MWA student at NU-MOA and is very fascinated about financial apps (He is Loving, Caring, Friendly, Sweet and also single if you are interested;)
 
           Always keep your answers concise, friendly, and specific to the ExTrack app. If a user asks something unrelated to the app, gently guide them back to how ExTrack can help them manage their expenses.
         `,
@@ -98,15 +100,31 @@ export default function ChatSupport({ visible, onClose }: ChatSupportProps) {
 
       setMessages((prev) => [...prev, newAiMessage]);
       scrollToBottom(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Gemini Error:", error);
+      
+      // Immediately stop the typing/loading indicator
+      setLoading(false);
+
+      let errorMessage = "Sorry, system is down today. We'll contact you once the issue is solved:)";
+      let alertTitle = "Error";
+      
+      if (error?.message?.includes("429") || error?.status === "RESOURCE_EXHAUSTED") {
+        errorMessage = "AI daily quota reached for this key! Please try again tomorrow or use a new API key.";
+        alertTitle = "Quota Reached";
+      } else if (error?.message?.includes("401") || error?.status === "UNAUTHENTICATED") {
+        errorMessage = "Authentication failed. Please check your API key configuration.";
+        alertTitle = "Unauthorized";
+      }
+
+      // Show native popup alert message
+      Alert.alert(alertTitle, errorMessage, [{ text: "OK" }]);
+
       setMessages((prev) => [
         ...prev,
-        { id: (Date.now() + 1).toString(), role: "model", text: "Sorry, system is down today. We'll contact you once the issue is solved:)" }
+        { id: (Date.now() + 1).toString(), role: "model", text: errorMessage }
       ]);
       scrollToBottom(true);
-    } finally {
-      setLoading(false);
     }
   };
 
