@@ -19,8 +19,8 @@
       "package": "com.extrack.app",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#83C1EEAB",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundColor": "#0f172a",
+        "foregroundImage": "./assets/images/react-logo@2x.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
@@ -39,16 +39,16 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/tabIcons/icons8-general-ledger-100.png"
+      "favicon": "./assets/images/react-logo@2x.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#9DD0FFAB",
+          "backgroundColor": "#051A4B",
           "image": "./assets/images/react-logo@2x.png",
-          "imageWidth": 76
+          "imageWidth": 120
         }
       ],
       "@react-native-community/datetimepicker",
@@ -70,7 +70,7 @@
         "expo-notifications",
         {
           "icon": "./assets/images/react-logo@2x.png",
-          "color": "#232425"
+          "color": "#04163F"
         }
       ]
     ],

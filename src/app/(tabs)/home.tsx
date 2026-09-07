@@ -245,6 +245,8 @@ export default function HomeScreen() {
           }
           if (userData?.pushNotificationsEnabled !== undefined) {
             setNotificationsEnabled(userData.pushNotificationsEnabled);
+          } else if (userData?.notificationsEnabled !== undefined) {
+            setNotificationsEnabled(userData.notificationsEnabled);
           }
         }
         loadedProfiles = true;

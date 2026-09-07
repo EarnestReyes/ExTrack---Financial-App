@@ -516,6 +516,36 @@ const unsubscribeCards = onSnapshot(
   ) => {
     if (!currentUser) return;
 
+    // If toggling push notifications, intercept with a confirmation alert explaining the feature
+    if (field === "isNotificationEnabled") {
+      const actionText = value ? "turn on" : "turn off";
+      Alert.alert(
+        "Push Notifications",
+        `Push notifications provide alerts for balance changes and important updates. Do you really want to ${actionText} push notifications?`,
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+            // Switch state remains unchanged if cancelled
+          },
+          {
+            text: "Confirm",
+            onPress: async () => {
+              setProfile((prev) => ({ ...prev, [field]: value }));
+              try {
+                const userDocRef = doc(db, "users", currentUser.uid);
+                await updateDoc(userDocRef, { [field]: value });
+              } catch (error) {
+                Alert.alert("Error", "Failed to update preferences.");
+                setProfile((prev) => ({ ...prev, [field]: !value }));
+              }
+            },
+          },
+        ]
+      );
+      return;
+    }
+
     setProfile((prev) => ({ ...prev, [field]: value }));
 
     try {
@@ -716,19 +746,22 @@ const handleSaveCard = async () => {
 
       // Record card amount as transaction so it populates analytics and statements/documents
       if (parsedAmount > 0) {
-        await addDoc(collection(db, "users", currentUser.uid, "transactions"), {
-          name: `Card Deposit: ${cardName.trim()}`,
-          amount: parsedAmount,
-          type: "Income",
-          category: "Card",
-          date: new Date().toISOString().split("T")[0],
-          time: new Date().toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          description: `Initial balance for card •••• ${cleanLastFour}`,
-          createdAt: serverTimestamp(),
-        });
+        // Condition: Do not log deposit transaction if push notifications/email alerts are disabled or balance is negative
+        if (profile.isNotificationEnabled && parsedAmount >= 0) {
+          await addDoc(collection(db, "users", currentUser.uid, "transactions"), {
+            name: `Card Deposit: ${cardName.trim()}`,
+            amount: parsedAmount,
+            type: "Income",
+            category: "Card",
+            date: new Date().toISOString().split("T")[0],
+            time: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            description: `Initial balance for card •••• ${cleanLastFour}`,
+            createdAt: serverTimestamp(),
+          });
+        }
       }
 
       console.log(`[Card Log] Created new card ID ${docRef.id} with amount: ₱${parsedAmount}`, cardData);
@@ -1396,16 +1429,7 @@ const openInformation = () => {
               </View>
               <Switch
                 value={profile.isNotificationEnabled}
-                onValueChange={(val) => {
-                  if (!val) {
-                    Alert.alert(
-                      "Notification",
-                      "This is under pilot mode, Thank you for your understanding!"
-                    );
-                  } else {
-                    handleTogglePreference("isNotificationEnabled", val);
-                  }
-                }}
+                onValueChange={(val) => handleTogglePreference("isNotificationEnabled", val)}
                 trackColor={{ false: "#767577", true: "#1e3a8a" }}
               />
             </View>
