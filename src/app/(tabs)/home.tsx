@@ -1,5 +1,6 @@
 import DefaultAvatar from "@/assets/images/default-avatar.png";
 import { auth, db } from "@/config/firebase";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { sendNegativeBalanceEmail } from "../../services/emailService";
 import {
@@ -68,6 +69,8 @@ export default function HomeScreen() {
   const [showTransactionsModal, setShowTransactionsModal] = useState(false);
   const [showLoansModal, setShowLoansModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [hideBalance, setHideBalance] = useState(false); // 👈 Added state for hiding/showing balance
+  const [isDataLoading, setIsDataLoading] = useState(true); // 👈 Guard state to track data fetching status
   const INITIAL_COUNT = 3;
 
   const router = useRouter();
@@ -100,13 +103,16 @@ export default function HomeScreen() {
   const [balancePeriod, setBalancePeriod] =
     useState<typeof overviewPeriod>("Day");
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
-  // 1. Updated state type to LoanItem[] and standard camelCase naming
-  const [loans, setLoanList] = useState<LoanItem[]>([]);
+  
+  // FIXED: Consolidated loan states to prevent shadowing/re-load clearing bugs
+  const [loans, setLoans] = useState<LoanItem[]>([]);
   const [selectedLoan, setSelectedLoan] = useState<LoanItem | null>(null);
-  const [loan, setLoans] = useState<LoanItem[]>([]);
-  const [selectedLoans, setSelectedLoans] = useState<LoanItem | null>(null);
 
-  const [selectedTransaction, setSelectedTransaction] =
+  // Cards State for Recent Transactions Integration
+  const [cards, setCards] = useState<any[]>([]);
+
+  const [selectedTransaction,
+    setSelectedTransaction] =
     useState<TransactionItem | null>(null);
 
   // Guard ref to ensure negative balance email is sent only once per negative cycle
@@ -133,7 +139,7 @@ export default function HomeScreen() {
   useEffect(() => {
     initDatabase();
     loadTransactions();
-    loadLoans(); // 2. Call loadLoans on component mount
+    loadLoans(); 
 
     if (currentUser) {
       processAutomaticLoanPayments();
@@ -156,7 +162,7 @@ export default function HomeScreen() {
         setProfilePic(localPic);
       }
 
-      // Load loans on focus (loadTransactions removed to prevent overwrite of Firestore real-time listener)
+      // Load loans on focus
       loadLoans();
     }, [systemColorScheme]),
   );
@@ -188,7 +194,7 @@ export default function HomeScreen() {
     }
   }, [currentUser, systemColorScheme]);
 
-  // Real-time listener for Firestore Profile Picture / Transactions / Loans
+  // Real-time listener for Firestore Profile Picture / Transactions / Loans / Cards
   const formatProfilePicUri = (rawPic: string | null): string | null => {
     if (!rawPic) return null;
     const trimmed = rawPic.trim();
@@ -207,10 +213,24 @@ export default function HomeScreen() {
   // Real-time Firestore Listeners
   // ==========================================
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setIsDataLoading(false);
+      return;
+    }
 
     const userPath = `users/${currentUser.uid}`;
     const userDocRef = doc(db, "users", currentUser.uid);
+
+    let loadedProfiles = false;
+    let loadedTransactions = false;
+    let loadedLoans = false;
+    let loadedCards = false;
+
+    const checkAllLoaded = () => {
+      if (loadedProfiles && loadedTransactions && loadedLoans && loadedCards) {
+        setIsDataLoading(false);
+      }
+    };
 
     // 1. Real-time Firestore Listener for User Profile Updates & Settings
     const unsubscribeUserDoc = onSnapshot(
@@ -227,9 +247,13 @@ export default function HomeScreen() {
             setNotificationsEnabled(userData.pushNotificationsEnabled);
           }
         }
+        loadedProfiles = true;
+        checkAllLoaded();
       },
       (error) => {
         console.error("Error listening to user profile:", error);
+        loadedProfiles = true;
+        checkAllLoaded();
       },
     );
 
@@ -254,16 +278,22 @@ export default function HomeScreen() {
         });
 
         remoteData.sort((a, b) => {
-          const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime();
-          const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime();
+          const timeA = a.time ? a.time : "00:00";
+          const timeB = b.time ? b.time : "00:00";
+          const dateA = new Date(`${a.date}T${timeA}`).getTime();
+          const dateB = new Date(`${b.date}T${timeB}`).getTime();
           return dateB - dateA;
         });
 
-        // Update React state directly with remote data
+        // Update React state directly with remote data safely
         setTransactions(remoteData);
+        loadedTransactions = true;
+        checkAllLoaded();
       },
       (error) => {
         console.error("Error listening to transactions:", error);
+        loadedTransactions = true;
+        checkAllLoaded();
       },
     );
 
@@ -288,17 +318,48 @@ export default function HomeScreen() {
           };
         });
 
-        setLoanList(remoteLoans);
+        setLoans(remoteLoans);
+        loadedLoans = true;
+        checkAllLoaded();
       },
       (error) => {
         console.error("Error listening to loans:", error);
+        loadedLoans = true;
+        checkAllLoaded();
       },
+    );
+
+    // 4. Real-time Listener for Cards
+    const cardsRef = collection(db, userPath, "cards");
+    const unsubscribeCards = onSnapshot(
+      cardsRef,
+      (snapshot) => {
+        const remoteCards = snapshot.docs.map((docItem) => {
+          const data = docItem.data();
+          return {
+            id: docItem.id,
+            name: data.name || "Card",
+            amount: Number(data.amount) || 0,
+            lastFour: data.lastFour || "****",
+            createdAt: data.createdAt || new Date().toISOString(),
+          };
+        });
+        setCards(remoteCards);
+        loadedCards = true;
+        checkAllLoaded();
+      },
+      (error) => {
+        console.error("Error listening to cards:", error);
+        loadedCards = true;
+        checkAllLoaded();
+      }
     );
 
     return () => {
       unsubscribeUserDoc();
       unsubscribeTransactions();
       unsubscribeLoans();
+      unsubscribeCards();
     };
   }, [currentUser]);
 
@@ -309,12 +370,16 @@ export default function HomeScreen() {
 
   const loadTransactions = () => {
     const dbData = fetchTransactionsFromDB();
-    setTransactions(dbData);
+    if (dbData && dbData.length > 0) {
+      setTransactions(dbData);
+    }
   };
 
   const loadLoans = () => {
     const dbData = fetchLoansFromDB();
-    setLoans(dbData);
+    if (dbData && dbData.length > 0) {
+      setLoans(dbData);
+    }
   };
 
   const formatAmountInput = (value: string) => {
@@ -362,7 +427,7 @@ export default function HomeScreen() {
 
     const transaction = {
       id: editingTransactionId,
-      firestoreId: existingTransaction?.firestoreId, // Pass the Firestore Document ID
+      firestoreId: existingTransaction?.firestoreId, 
       name,
       amount: numericAmount,
       type,
@@ -409,13 +474,29 @@ export default function HomeScreen() {
     setCategory("");
   };
 
-  // Calculations
-  const totalIncome = transactions
+  // Combine standard transactions and cards formatted as transactions for unified display
+  const combinedTransactions = [
+    ...transactions,
+    ...cards.map((card) => ({
+      id: `card-${card.id}`,
+      firestoreId: card.id,
+      name: `${card.name} (*${card.lastFour})`,
+      amount: card.amount,
+      type: "Income" as const,
+      category: "Savings",
+      date: card.createdAt ? card.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
+      time: "00:00",
+      userId: currentUser?.uid,
+    })),
+  ];
+
+  // Calculations (Updated to include cards via combinedTransactions)
+  const totalIncome = combinedTransactions
     .filter((t) => t.type === "Income")
     .reduce((total, t) => total + t.amount, 0);
 
   const totalExpenses = Number(
-    transactions
+    combinedTransactions
       .filter((t) => t.type === "Expense")
       .reduce((total, t) => total + t.amount, 0)
       .toFixed(2),
@@ -423,22 +504,25 @@ export default function HomeScreen() {
 
   const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
 
-  // Negative balance email trigger effect (respects notifications toggle, ensures 1 send only)
+  // FIXED: Strictly guard negative balance email dispatch to prevent false triggers when balance >= 0 OR while data is fetching
   useEffect(() => {
+    if (isDataLoading) return; // Wait until all remote sources and cards are fully fetched
+
+    if (availableBalance >= 0) {
+      emailAlertSentRef.current = false;
+      return;
+    }
+
     if (
       availableBalance < 0 && 
       currentUser?.email && 
       notificationsEnabled && 
       !emailAlertSentRef.current
     ) {
-      handleTriggerEmail(availableBalance);
       emailAlertSentRef.current = true;
+      handleTriggerEmail(availableBalance);
     }
-    
-    if (availableBalance >= 0) {
-      emailAlertSentRef.current = false;
-    }
-  }, [availableBalance, currentUser, notificationsEnabled]);
+  }, [availableBalance, currentUser, notificationsEnabled, isDataLoading]);
 
   // Chart Data Processing
   const today = new Date();
@@ -448,7 +532,7 @@ export default function HomeScreen() {
   if (overviewPeriod === "Month") overviewStartDate.setDate(1);
   if (overviewPeriod === "Year") overviewStartDate.setMonth(0, 1);
 
-  const overviewTransactions = transactions.filter((transaction) => {
+  const overviewTransactions = combinedTransactions.filter((transaction) => {
     const [year, month, day] = transaction.date.split("-").map(Number);
     const transactionDate = new Date(year, month - 1, day);
     transactionDate.setHours(0, 0, 0, 0);
@@ -525,9 +609,9 @@ export default function HomeScreen() {
   if (balancePeriod === "Month") balanceStartDate.setDate(1);
   if (balancePeriod === "Year") balanceStartDate.setMonth(0, 1);
 
-  const balanceTransactions = [...transactions].sort((first, second) => {
-    const firstDate = `${first.date} ${first.time}`;
-    const secondDate = `${second.date} ${second.time}`;
+  const balanceTransactions = [...combinedTransactions].sort((first, second) => {
+    const firstDate = `${first.date} ${first.time || "00:00"}`;
+    const secondDate = `${second.date} ${second.time || "00:00"}`;
 
     const dateComparison = firstDate.localeCompare(secondDate);
     if (dateComparison !== 0) return dateComparison;
@@ -584,7 +668,7 @@ export default function HomeScreen() {
       ? "Balance increasing"
       : "Balance decreasing";
 
-  const filteredTransactions = transactions.filter((t) => {
+  const filteredTransactions = combinedTransactions.filter((t) => {
     if (filter === "Income") return t.type === "Income";
     if (filter === "Expense") return t.type === "Expense";
     return true;
@@ -600,9 +684,10 @@ export default function HomeScreen() {
           "Entertainment",
           "Health",
           "Education",
+          "Savings",
           "Other",
         ]
-      : ["Salary", "Allowance", "Freelance", "Gift", "Other"];
+      : ["Salary", "Allowance", "Freelance", "Gift", "Savings", "Other"];
 
   const getCategoryIcon = (cat: string) => {
     switch (cat) {
@@ -628,12 +713,14 @@ export default function HomeScreen() {
         return "💻";
       case "Gift":
         return "🎁";
+      case "Savings":
+        return "🏦";
       default:
         return "💳";
     }
   };
 
-  const handleTransactionPress = (transaction: TransactionItem) => {
+  const handleTransactionPress = (transaction: any) => {
     setSelectedTransaction(transaction);
   };
 
@@ -648,15 +735,19 @@ export default function HomeScreen() {
   const handleDeleteSelectedTransaction = async () => {
   if (!selectedTransaction?.id) return;
 
+  if (String(selectedTransaction.id).startsWith("card-")) {
+    Alert.alert("Notice", "Card amounts are managed inside your wallet/card details.");
+    closeTransactionActions();
+    return;
+  }
+
   try {
-    // Pass local id, Firestore transaction document ID, and loanId
     await deleteTransactionFromDB(
-      selectedTransaction.id,
+      Number(selectedTransaction.id),
       selectedTransaction.firestoreId,
       selectedTransaction.loanId
     );
 
-    // Update local React state to reflect immediate deletion
     setTransactions((current) =>
       current.filter((t) => t.id !== selectedTransaction.id)
     );
@@ -726,9 +817,7 @@ export default function HomeScreen() {
 
     try {
       const loansRef = collection(db, "users", currentUser.uid, "loans");
-
       const loansSnapshot = await getDocs(loansRef);
-
       const transactionsRef = collection(
         db,
         "users",
@@ -737,7 +826,6 @@ export default function HomeScreen() {
       );
 
       const now = new Date();
-
       const todayYear = now.getFullYear();
       const todayMonth = now.getMonth();
       const todayDay = now.getDate();
@@ -748,11 +836,8 @@ export default function HomeScreen() {
         String(todayDay).padStart(2, "0"),
       ].join("-");
 
-      console.log(`Checking loans for ${todayString}`);
-
       for (const loanDoc of loansSnapshot.docs) {
         const loan = loanDoc.data();
-
         const monthlyPayment = Number(loan.totalAmount);
         const durationMonths = Number(loan.durationMonths);
 
@@ -767,33 +852,19 @@ export default function HomeScreen() {
         }
 
         const startDate = new Date(loan.startDate);
-
-        if (isNaN(startDate.getTime())) {
-          console.log(`Invalid start date for loan ${loanDoc.id}`);
-          continue;
-        }
+        if (isNaN(startDate.getTime())) continue;
 
         const loanStartYear = startDate.getFullYear();
         const loanStartMonth = startDate.getMonth();
         const paymentDay = startDate.getDate();
 
-        if (todayDay !== paymentDay) {
-          continue;
-        }
+        if (todayDay !== paymentDay) continue;
 
         const monthsSinceStart =
           (todayYear - loanStartYear) * 12 + (todayMonth - loanStartMonth);
-
         const paymentNumber = monthsSinceStart + 1;
 
-        if (paymentNumber <= 0) {
-          continue;
-        }
-
-        if (paymentNumber > durationMonths) {
-          console.log(`${loan.title}: All loan payments completed.`);
-          continue;
-        }
+        if (paymentNumber <= 0 || paymentNumber > durationMonths) continue;
 
         const paymentQuery = query(
           transactionsRef,
@@ -802,16 +873,9 @@ export default function HomeScreen() {
         );
 
         const existingPaymentSnapshot = await getDocs(paymentQuery);
-
-        if (!existingPaymentSnapshot.empty) {
-          console.log(
-            `${loan.title}: Payment #${paymentNumber} already recorded.`,
-          );
-          continue;
-        }
+        if (!existingPaymentSnapshot.empty) continue;
 
         const transactionRef = doc(transactionsRef);
-
         await setDoc(transactionRef, {
           id: Date.now(),
           name: `${loan.title} Loan Payment`,
@@ -820,22 +884,13 @@ export default function HomeScreen() {
           category: "Bills",
           date: todayString,
           time: now.toTimeString().slice(0, 5),
-
           loanId: loanDoc.id,
           loanPaymentDate: todayString,
           loanPaymentNumber: paymentNumber,
-
           automatic: true,
-
           createdAt: new Date().toISOString(),
         });
-
-        console.log(
-          `Created payment #${paymentNumber} for ${loan.title}: ₱${monthlyPayment}`,
-        );
       }
-
-      console.log("Loan payment check completed.");
     } catch (error) {
       console.error("Error processing automatic loan payments:", error);
     }
@@ -857,11 +912,6 @@ export default function HomeScreen() {
 
     if (!hasValidNumericId && !hasValidFirestoreId) {
       Alert.alert("Error", "Invalid Loan ID. Cannot delete this record.");
-      console.error(
-        "Delete failed: No valid loan ID provided ->",
-        selectedLoan,
-      );
-    
       return;
     }
 
@@ -897,8 +947,6 @@ export default function HomeScreen() {
     );
   };
 
-  
-
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <ScrollView
@@ -921,7 +969,6 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>Personal Finance Tracker</Text>
           </View>
 
-          {/* TouchableOpacity pointing to explore route */}
           <TouchableOpacity
             style={styles.profileButton}
             onPress={() => router.push("/explore")}
@@ -938,30 +985,50 @@ export default function HomeScreen() {
         </View>
 
         {/* BALANCE CARD */}
-          <View style={styles.balanceCard}>
-            <Text style={styles.balanceLabel}>Available Balance</Text>
-            <Text style={[styles.balance, availableBalance < 0 && { color: "#ef4444" }]}>
-              ₱
-              {availableBalance.toLocaleString("en-PH", {
-                minimumFractionDigits: 2,
-              })}
-            </Text>
-
-            <View style={styles.statsRow}>
-              <View>
-                <Text style={styles.statsLabel}>Incoming</Text>
-                <Text style={styles.incomeText}>
-                  +₱{totalIncome.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                </Text>
-              </View>
-              <View>
-                <Text style={styles.statsLabel}>Outgoing</Text>
-                <Text style={styles.expenseText}>
-                  -₱{totalExpenses.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                </Text>
-              </View>
+        <View style={styles.balanceCard}>
+          <View style={styles.balanceHeaderRow}>
+            <View style={styles.balanceTitleContainer}>
+              <Text style={styles.balanceLabel}>Available Balance</Text>
+              <TouchableOpacity
+                onPress={() => setHideBalance(!hideBalance)}
+                style={styles.eyeButton}
+              >
+                <Ionicons
+                  name={hideBalance ? "eye-off-outline" : "eye-outline"}
+                  size={22}
+                  color="#888"
+                />
+              </TouchableOpacity>
             </View>
           </View>
+
+          <Text style={[styles.balance, availableBalance < 0 && !hideBalance && { color: "#ef4444" }]}>
+            {hideBalance
+              ? "₱ ****"
+              : `₱${availableBalance.toLocaleString("en-PH", {
+                  minimumFractionDigits: 2,
+                })}`}
+          </Text>
+
+          <View style={styles.statsRow}>
+            <View>
+              <Text style={styles.statsLabel}>Incoming</Text>
+              <Text style={styles.incomeText}>
+                {hideBalance
+                  ? "+₱ ****"
+                  : `+₱${totalIncome.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`}
+              </Text>
+            </View>
+            <View>
+              <Text style={styles.statsLabel}>Outgoing</Text>
+              <Text style={styles.expenseText}>
+                {hideBalance
+                  ? "-₱ ****"
+                  : `-₱${totalExpenses.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`}
+              </Text>
+            </View>
+          </View>
+        </View>
 
         {/* LINE CHART SECTION */}
         <View style={styles.sectionHeader}>
@@ -1048,117 +1115,25 @@ export default function HomeScreen() {
         </View>
 
         <Text style={styles.spendingOverviewDescription}>
-        Description: {spendingOverviewDescription}
-      </Text>
+          Description: {spendingOverviewDescription}
+        </Text>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Balance Overview</Text>
-      </View>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Balance Overview</Text>
+        </View>
 
-      {/* OVERVIEW PERIOD FILTERS */}
-      <View style={styles.overviewFilterContainer}>
-        {overviewPeriods.map((period) => {
-          const isActive = balancePeriod === period;
-
-          return (
-            <TouchableOpacity
-              key={`balance-${period}`}
-              style={[
-                styles.overviewFilter,
-                isActive && styles.overviewFilterActive,
-              ]}
-              onPress={() => setBalancePeriod(period)}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[
-                  styles.filterText,
-                  isActive && styles.filterTextActive,
-                ]}
-              >
-                {period}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={[styles.balanceTrendLabel, { color: balanceTrendColor }]}>
-        {balanceTrendLabel}
-      </Text>
-
-      {/* CHART CONTAINER */}
-      <View style={styles.chartCard}>
-        {balanceDisplayValues.length > 0 ? (
-          <ScrollView
-            horizontal
-            nestedScrollEnabled
-            showsHorizontalScrollIndicator
-            style={styles.balanceChartScroll}
-            contentContainerStyle={styles.balanceChartContent}
-          >
-            <LineChart
-              key={`balance-chart-${balancePeriod}-${balanceDisplayValues.join(",")}`}
-              data={{
-                labels: balanceDisplayLabels.map((label) =>
-                  label === "Start" ? label : formatChartLabel(label, balancePeriod)
-                ),
-                datasets: [
-                  {
-                    data: balanceDisplayValues,
-                    color: () => balanceTrendColor,
-                  },
-                ],
-              }}
-              width={balanceChartWidth}
-              height={180}
-              fromZero={false}
-              getDotColor={(value) => (value >= 0 ? "#22c55e" : "#ef4444")}
-              chartConfig={{
-                backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
-                backgroundGradientFrom: isDarkMode ? "#1e293b" : "#ffffff",
-                backgroundGradientTo: isDarkMode ? "#1e293b" : "#ffffff",
-                decimalPlaces: 0,
-                color: () => balanceTrendColor,
-                labelColor: (opacity = 1) =>
-                  isDarkMode
-                    ? `rgba(148, 163, 184, ${opacity})`
-                    : `rgba(100, 116, 139, ${opacity})`,
-                propsForDots: { r: "4", strokeWidth: "2" },
-                style: { borderRadius: 16 },
-              }}
-              bezier
-              style={{ marginVertical: 8, borderRadius: 16 }}
-            />
-          </ScrollView>
-        ) : (
-          <Text style={styles.emptyText}>
-            Add transactions to track balance
-          </Text>
-        )}
-      </View>
-
-        {/* RECENT TRANSACTIONS CONTAINER */}
-        <View style={styles.cardContainer}>
-          {/* RECENT TRANSACTIONS HEADER */}
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-          </View>
-
-        
-        {/* FILTERS */}
         <View style={styles.overviewFilterContainer}>
-          {["All", "Income", "Expense"].map((f) => {
-            const isActive = filter === f;
+          {overviewPeriods.map((period) => {
+            const isActive = balancePeriod === period;
 
             return (
               <TouchableOpacity
-                key={f}
+                key={`balance-${period}`}
                 style={[
                   styles.overviewFilter,
                   isActive && styles.overviewFilterActive,
                 ]}
-                onPress={() => setFilter(f)}
+                onPress={() => setBalancePeriod(period)}
                 activeOpacity={0.7}
               >
                 <Text
@@ -1167,14 +1142,100 @@ export default function HomeScreen() {
                     isActive && styles.filterTextActive,
                   ]}
                 >
-                  {f}
+                  {period}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
-          {/* LIST TRANSACTIONS */}
+        <Text style={[styles.balanceTrendLabel, { color: balanceTrendColor }]}>
+          {balanceTrendLabel}
+        </Text>
+
+        <View style={styles.chartCard}>
+          {balanceDisplayValues.length > 0 ? (
+            <ScrollView
+              horizontal
+              nestedScrollEnabled
+              showsHorizontalScrollIndicator
+              style={styles.balanceChartScroll}
+              contentContainerStyle={styles.balanceChartContent}
+            >
+              <LineChart
+                key={`balance-chart-${balancePeriod}-${balanceDisplayValues.join(",")}`}
+                data={{
+                  labels: balanceDisplayLabels.map((label) =>
+                    label === "Start" ? label : formatChartLabel(label, balancePeriod)
+                  ),
+                  datasets: [
+                    {
+                      data: balanceDisplayValues,
+                      color: () => balanceTrendColor,
+                    },
+                  ],
+                }}
+                width={balanceChartWidth}
+                height={180}
+                fromZero={false}
+                getDotColor={(value) => (value >= 0 ? "#22c55e" : "#ef4444")}
+                chartConfig={{
+                  backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
+                  backgroundGradientFrom: isDarkMode ? "#1e293b" : "#ffffff",
+                  backgroundGradientTo: isDarkMode ? "#1e293b" : "#ffffff",
+                  decimalPlaces: 0,
+                  color: () => balanceTrendColor,
+                  labelColor: (opacity = 1) =>
+                    isDarkMode
+                      ? `rgba(148, 163, 184, ${opacity})`
+                      : `rgba(100, 116, 139, ${opacity})`,
+                  propsForDots: { r: "4", strokeWidth: "2" },
+                  style: { borderRadius: 16 },
+                }}
+                bezier
+                style={{ marginVertical: 8, borderRadius: 16 }}
+              />
+            </ScrollView>
+          ) : (
+            <Text style={styles.emptyText}>
+              Add transactions to track balance
+            </Text>
+          )}
+        </View>
+
+        {/* RECENT TRANSACTIONS CONTAINER */}
+        <View style={styles.cardContainer}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          </View>
+        
+          <View style={styles.overviewFilterContainer}>
+            {["All", "Income", "Expense"].map((f) => {
+              const isActive = filter === f;
+
+              return (
+                <TouchableOpacity
+                  key={f}
+                  style={[
+                    styles.overviewFilter,
+                    isActive && styles.overviewFilterActive,
+                  ]}
+                  onPress={() => setFilter(f)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.filterText,
+                      isActive && styles.filterTextActive,
+                    ]}
+                  >
+                    {f}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
           {filteredTransactions.length > 0 ? (
             filteredTransactions.slice(0, INITIAL_COUNT).map((item) => (
               <TouchableOpacity
@@ -1215,7 +1276,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* SEE MORE BUTTON (OPENS TRANSACTIONS MODAL) */}
           {filteredTransactions.length > INITIAL_COUNT && (
             <TouchableOpacity
               style={styles.seeMoreButton}
@@ -1261,7 +1321,6 @@ export default function HomeScreen() {
               </TouchableOpacity>
             ))}
 
-            {/* SEE MORE BUTTON (OPENS LOANS MODAL) */}
             {loans.length > INITIAL_COUNT && (
               <TouchableOpacity
                 style={styles.seeMoreButton}
@@ -1273,7 +1332,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* ALL TRANSACTIONS SCROLLABLE MODAL FORM */}
+        {/* ALL TRANSACTIONS MODAL */}
         <Modal
           visible={showTransactionsModal}
           animationType="slide"
@@ -1334,7 +1393,7 @@ export default function HomeScreen() {
           </View>
         </Modal>
 
-        {/* ALL LOANS SCROLLABLE MODAL FORM */}
+        {/* ALL LOANS MODAL */}
         <Modal
           visible={showLoansModal}
           animationType="slide"
@@ -1404,7 +1463,6 @@ export default function HomeScreen() {
                 {(selectedLoan?.totalAmount ?? 0).toLocaleString()}
               </Text>
 
-              {/* DELETE BUTTON */}
               <TouchableOpacity
                 style={styles.actionModalDeleteButton}
                 onPress={handleDeleteSelectedLoan}
@@ -1412,7 +1470,6 @@ export default function HomeScreen() {
                 <Text style={styles.actionModalDeleteText}>Delete loan</Text>
               </TouchableOpacity>
 
-              {/* CANCEL BUTTON */}
               <TouchableOpacity
                 style={styles.actionModalCancelButton}
                 onPress={closeLoanActions}
@@ -1440,22 +1497,24 @@ export default function HomeScreen() {
               {selectedTransaction?.amount.toLocaleString()}
             </Text>
 
-            <TouchableOpacity
-              style={styles.actionModalEditButton}
-              onPress={() => {
-                if (selectedTransaction)
-                  openEditTransaction(selectedTransaction);
-                closeTransactionActions();
-              }}
-            >
-              <Text style={styles.actionModalEditText}>Edit transaction</Text>
-            </TouchableOpacity>
+            {!String(selectedTransaction?.id).startsWith("card-") && (
+              <TouchableOpacity
+                style={styles.actionModalEditButton}
+                onPress={() => {
+                  if (selectedTransaction)
+                    openEditTransaction(selectedTransaction);
+                  closeTransactionActions();
+                }}
+              >
+                <Text style={styles.actionModalEditText}>Edit transaction</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.actionModalDeleteButton}
               onPress={handleDeleteSelectedTransaction}
             >
               <Text style={styles.actionModalDeleteText}>
-                Delete transaction
+                {String(selectedTransaction?.id).startsWith("card-") ? "Dismiss" : "Delete transaction"}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -1493,7 +1552,6 @@ export default function HomeScreen() {
                   {editingTransactionId ? "Edit Transaction" : "Add Transaction"}
                 </Text>
 
-                {/* TYPE SWITCHER */}
                 <View style={styles.typeContainer}>
                   <TouchableOpacity
                     style={[
@@ -1532,7 +1590,7 @@ export default function HomeScreen() {
                 <Text style={styles.inputLabel}>Title</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. Groceries"
+                  placeholder="e.g. Card Savings"
                   placeholderTextColor="#94a3b8"
                   value={name}
                   onChangeText={setName}
@@ -1598,7 +1656,7 @@ export default function HomeScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-      </SafeAreaView>
+    </SafeAreaView>
   );
 }
 
@@ -1656,14 +1714,6 @@ const createStyles = (isDarkMode: boolean) => {
       width: "100%",
       height: "100%",
     },
-    themeToggleContainer: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
-    themeToggleLabel: {
-      fontSize: 18,
-      marginRight: 6,
-    },
     balanceCard: {
       backgroundColor: cardColor,
       borderRadius: 16,
@@ -1672,10 +1722,23 @@ const createStyles = (isDarkMode: boolean) => {
       borderWidth: 1,
       borderColor,
     },
+    balanceHeaderRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 4,
+    },
+    balanceTitleContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    eyeButton: {
+      padding: 2,
+    },
     balanceLabel: {
       fontSize: 13,
       color: secondaryTextColor,
-      marginBottom: 4,
     },
     balance: {
       fontSize: 28,
@@ -1770,23 +1833,6 @@ const createStyles = (isDarkMode: boolean) => {
       marginTop: -4,
       marginBottom: 16,
       paddingHorizontal: 4,
-    },
-    filterContainer: {
-      flexDirection: "row",
-      marginBottom: 14,
-    },
-    filterChip: {
-      paddingHorizontal: 16,
-      paddingVertical: 6,
-      borderRadius: 20,
-      backgroundColor: cardColor,
-      marginRight: 8,
-      borderWidth: 1,
-      borderColor,
-    },
-    filterChipActive: {
-      backgroundColor: "#3b82f6",
-      borderColor: "#3b82f6",
     },
     filterText: {
       fontSize: 13,
@@ -2037,7 +2083,6 @@ const createStyles = (isDarkMode: boolean) => {
       color: "#ffffff",
       fontWeight: "600",
     },
-
     cardContainer: {
       backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
       borderRadius: 18,
@@ -2065,7 +2110,7 @@ const createStyles = (isDarkMode: boolean) => {
     fullModalContainer: {
       flex: 1,
       backgroundColor: isDarkMode ? "#0f172a" : "#f8fafc",
-      paddingTop: 60, // Added top spacing so it won't touch the edge
+      paddingTop: 60,
       paddingHorizontal: 20,
     },
     fullModalHeader: {

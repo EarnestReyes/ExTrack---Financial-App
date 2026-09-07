@@ -53,12 +53,14 @@ export interface LoanItem {
 }
 
 export interface SavedCard {
-  id: string;
+  id?: number;
   firestoreId?: string;
   name: string;
   type: string;
   lastFour: string;
   expiry: string;
+  amount?: number;
+  createdAt?: string;
 }
 
 export interface SyncTask {
@@ -122,12 +124,14 @@ export const initDatabase = () => {
       createdAt TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS cards (
-      id TEXT PRIMARY KEY NOT NULL,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       firestoreId TEXT UNIQUE,
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       lastFour TEXT NOT NULL,
-      expiry TEXT NOT NULL
+      expiry TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      createdAt TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sync_queue (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -292,6 +296,28 @@ export const syncFromFirestore = async (): Promise<void> => {
         ]
       );
     });
+
+    // Pull Cards
+    const cardsSnapshot = await getDocs(collection(firestoreDb, userPath, "cards"));
+    cardsSnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      db.runSync(
+        `INSERT INTO cards (firestoreId, name, type, lastFour, expiry, amount, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(firestoreId) DO UPDATE SET
+            name=excluded.name, type=excluded.type, lastFour=excluded.lastFour,
+            expiry=excluded.expiry, amount=excluded.amount`,
+        [
+          docSnap.id,
+          data.name,
+          data.type,
+          data.lastFour,
+          data.expiry,
+          Number(data.amount) || 0,
+          data.createdAt || new Date().toISOString(),
+        ]
+      );
+    });
   } catch (error) {
     console.warn("Pull sync skipped due to network connection:", error);
   }
@@ -327,16 +353,12 @@ export const fetchTransactionsFromDB = (): TransactionItem[] => {
   );
 };
 
-// ==========================================
-// Fixed Transaction Insert Function
-// ==========================================
 export const insertTransactionToDB = async (
   transaction: TransactionItem
 ): Promise<{ id: number; firestoreId: string }> => {
   initDatabase();
   const user = await getCurrentUser();
 
-  // 1. Sanitize loanId to prevent Android native bridge string coercion
   const cleanLoanId = 
     transaction.loanId && 
     transaction.loanId !== "null" && 
@@ -345,7 +367,6 @@ export const insertTransactionToDB = async (
       ? transaction.loanId.trim() 
       : null;
 
-  // 2. Generate Firestore doc ID safely without creating an orphaned "users/pending" path
   const firestoreId = transaction.firestoreId || doc(collection(firestoreDb, "_id_generator_")).id;
 
   const result = db.runSync(
@@ -625,6 +646,108 @@ export const deleteMasterLoanFromDB = async (loanId: string): Promise<void> => {
 };
 
 // ==========================================
+// Card CRUD Functions (NEWLY ADDED / UPDATED)
+// ==========================================
+export const fetchCardsFromDB = (): SavedCard[] => {
+  initDatabase();
+  return db.getAllSync<SavedCard>("SELECT * FROM cards ORDER BY id DESC");
+};
+
+export const insertCardToDB = async (
+  card: SavedCard
+): Promise<{ id: number; firestoreId: string }> => {
+  initDatabase();
+  const user = await getCurrentUser();
+  const createdAt = card.createdAt || new Date().toISOString();
+
+  const collectionRef = collection(firestoreDb, "users", user?.uid || "pending", "cards");
+  const firestoreId = card.firestoreId || doc(collectionRef).id;
+
+  const result = db.runSync(
+    "INSERT INTO cards (firestoreId, name, type, lastFour, expiry, amount, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [
+      firestoreId,
+      card.name,
+      card.type,
+      card.lastFour,
+      card.expiry,
+      card.amount || 0,
+      createdAt,
+    ]
+  );
+
+  const insertedId = result.lastInsertRowId;
+  const payload = {
+    id: insertedId,
+    name: card.name,
+    type: card.type,
+    lastFour: card.lastFour,
+    expiry: card.expiry,
+    amount: card.amount || 0,
+    createdAt: createdAt,
+  };
+
+  await safeFirestoreWrite("INSERT", "cards", firestoreId, payload, async () => {
+    if (!user) return;
+    const docRef = doc(firestoreDb, "users", user.uid, "cards", firestoreId);
+    await setDoc(docRef, payload);
+  });
+
+  return { id: insertedId, firestoreId };
+};
+
+export const deleteCardFromDB = async (
+  id?: number | string,
+  firestoreId?: string
+): Promise<void> => {
+  initDatabase();
+
+  let targetFirestoreId = firestoreId;
+  if (id && !targetFirestoreId) {
+    const row = db.getFirstSync<{ firestoreId: string }>(
+      "SELECT firestoreId FROM cards WHERE id = ?",
+      [Number(id)]
+    );
+    if (row?.firestoreId) targetFirestoreId = row.firestoreId;
+  }
+
+  if (id) {
+    db.runSync("DELETE FROM cards WHERE id = ? OR firestoreId = ?", [Number(id) || -1, String(id)]);
+  }
+
+  if (!targetFirestoreId) return;
+
+  await safeFirestoreWrite("DELETE", "cards", targetFirestoreId, {}, async () => {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const cardRef = doc(firestoreDb, `users/${user.uid}/cards`, targetFirestoreId);
+    await deleteDoc(cardRef);
+  });
+};
+
+export const clearCardsFromDB = async (): Promise<void> => {
+  initDatabase();
+
+  db.runSync("DELETE FROM cards;");
+
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  try {
+    const cardsRef = collection(firestoreDb, "users", user.uid, "cards");
+    const snapshot = await getDocs(cardsRef);
+
+    if (!snapshot.empty) {
+      const batch = writeBatch(firestoreDb);
+      snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
+      await batch.commit();
+    }
+  } catch (error) {
+    console.warn("Remote card clear deferred (network offline):", error);
+  }
+};
+
+// ==========================================
 // Profile Picture Functions
 // ==========================================
 export const setUserProfilePicture = async (
@@ -633,7 +756,6 @@ export const setUserProfilePicture = async (
   try {
     initDatabase();
 
-    // 1. Persist locally to SQLite first
     db.runSync(
       `INSERT INTO user_profile (id, profilePic)
        VALUES (1, ?)
@@ -646,7 +768,6 @@ export const setUserProfilePicture = async (
       updatedAt: new Date().toISOString(),
     };
 
-    // 2. Safe Firestore Write (Handles online sync & offline queue automatically)
     await safeFirestoreWrite(
       "UPDATE",
       "user_profile",
@@ -695,7 +816,7 @@ export const getUserProfilePicture = (): string | null => {
     console.error("Error fetching profile picture from DB:", error);
   }
 
-  return null; // Return null if no profile image exists
+  return null;
 };
 
 export const getInitials = (
@@ -756,49 +877,19 @@ export const clearAllDataAndDatabase = async () => {
   }
 };
 
-// ==========================================
-// Card CRUD Functions
-// ==========================================
-export const clearCardsFromDB = async (): Promise<void> => {
-  initDatabase();
-
-  db.runSync("DELETE FROM cards;");
-
-  const user = await getCurrentUser();
-  if (!user) return;
-
-  try {
-    const cardsRef = collection(firestoreDb, "users", user.uid, "cards");
-    const snapshot = await getDocs(cardsRef);
-
-    if (!snapshot.empty) {
-      const batch = writeBatch(firestoreDb);
-      snapshot.forEach((docSnap) => batch.delete(docSnap.ref));
-      await batch.commit();
-    }
-  } catch (error) {
-    console.warn("Remote card clear deferred (network offline):", error);
-  }
-};
-
 export interface CreditScoreMetrics {
   activeLoansCount: number;
   completedLoansCount: number;
   paymentHistoryCount: number;
   totalLoanAmount: number;
   totalMonthlyPayments: number;
-  totalCurrentBalances: number; // Add this line
-  totalCreditLimits: number;    // Add this line
+  totalCurrentBalances: number;
+  totalCreditLimits: number;
 }
 
 // ==========================================
 // Firestore Credit Score Operations
 // ==========================================
-
-// ==========================================
-// Firestore Credit Score Operations
-// ==========================================
-
 export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScoreMetrics> => {
   const user = await getCurrentUser();
   if (!user) {
@@ -808,8 +899,8 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       paymentHistoryCount: 0,
       totalLoanAmount: 0,
       totalMonthlyPayments: 0,
-      totalCurrentBalances: 0, // Used as Total Monthly Expenses
-      totalCreditLimits: 0,     // Used as Total Monthly Income
+      totalCurrentBalances: 0,
+      totalCreditLimits: 0,
     };
   }
 
@@ -817,7 +908,6 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
   const todayStr = new Date().toISOString().split("T")[0];
 
   try {
-    // 1. Fetch Loans Collection
     const loansRef = collection(firestoreDb, userPath, "loans");
     const loansSnapshot = await getDocs(loansRef);
 
@@ -843,7 +933,6 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       }
     });
 
-    // 2. Fetch Transactions (Calculate Expenses & Income)
     const txRef = collection(firestoreDb, userPath, "transactions");
     const txSnapshot = await getDocs(txRef);
 
@@ -864,9 +953,6 @@ export const fetchCreditScoreMetricsFromFirestore = async (): Promise<CreditScor
       }
     });
 
-    // Keeping variable names mapped to your requested expense calculation:
-    // totalCurrentBalances -> Total Monthly Expenses
-    // totalCreditLimits -> Total Monthly Income
     const totalCurrentBalances = totalExpenses;
     const totalCreditLimits = totalIncome;
 
@@ -904,7 +990,6 @@ export const saveCreditScoreToFirestore = async (
   initDatabase();
   const timestamp = new Date().toISOString();
 
-  // 1. Persist locally in SQLite
   db.runSync(
     `INSERT INTO credit_scores (user_id, score, tier, payment_history_score, credit_utilization_pct, is_estimated, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -919,7 +1004,6 @@ export const saveCreditScoreToFirestore = async (
     ]
   );
 
-  // 2. Persist snapshot to Firestore
   const payload = {
     userId,
     score,
@@ -940,8 +1024,6 @@ export const saveCreditScoreToFirestore = async (
 // ==========================================
 // Network Listener Initialization
 // ==========================================
-
-// PLACE THIS AT THE VERY BOTTOM OF database.ts
 NetInfo.addEventListener((state: NetInfoState) => {
   if (state.isConnected) {
     syncFromFirestore();

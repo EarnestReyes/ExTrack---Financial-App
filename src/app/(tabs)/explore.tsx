@@ -74,6 +74,7 @@ interface SavedCard {
   type: string;
   lastFour: string;
   expiry: string;
+  amount?: number;
 }
 
 interface UserProfile {
@@ -108,6 +109,7 @@ export default function ProfileScreen() {
   const [cardType, setCardType] = useState("Debit");
   const [cardLastFour, setCardLastFour] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
+  const [cardAmount, setCardAmount] = useState("");
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<SavedCard | null>(null);
 
@@ -430,7 +432,7 @@ export default function ProfileScreen() {
         annualExpense: Number(data.annualExpense) || 0,
         durationMonths: Number(data.durationMonths) || 1,
         remainingMonths: Number(data.remainingMonths) || 0,
-        accountId: data.accountId ?? "", // 👈 Satisfies type check
+        accountId: data.accountId ?? "",
       };
     });
     setLoans(fetchedLoans);
@@ -452,6 +454,7 @@ const unsubscribeCards = onSnapshot(
         type: data.type ?? "Card",
         lastFour: data.lastFour ?? "0000",
         expiry: data.expiry ?? "MM/YY",
+        amount: Number(data.amount) || 0,
       };
     });
     setCards(fetchedCards);
@@ -560,7 +563,6 @@ const unsubscribeCards = onSnapshot(
       await handleTogglePreference("isBiometricEnabled", true);
       Alert.alert("Success", "Biometric authentication enabled!");
     } else {
-      // Revert switch if authentication was canceled or failed
       await handleTogglePreference("isBiometricEnabled", false);
     }
   } catch (error) {
@@ -576,7 +578,6 @@ const unsubscribeCards = onSnapshot(
   const handleSaveLoan = async () => {
   if (!currentUser) return;
 
-  // 1. Parse inputs: treat loanAmount as TOTAL loan balance
   const parsedTotalAmount = parseFloat(loanAmount) || 0;
   const parsedDuration = parseInt(loanDuration, 10) || 0;
 
@@ -588,7 +589,6 @@ const unsubscribeCards = onSnapshot(
     return;
   }
 
-  // 2. Calculate monthly installment and dates
   const monthlyPayment = Math.round((parsedTotalAmount / parsedDuration) * 100) / 100;
 
   const loanEndDate = new Date(loanStartDate);
@@ -599,8 +599,8 @@ const unsubscribeCards = onSnapshot(
   try {
     const loanData = {
       title: loanTitle.trim(),
-      totalAmount: parsedTotalAmount, // Store actual principal/total balance here
-      monthlyPayment: monthlyPayment,  // Monthly installment amount
+      totalAmount: parsedTotalAmount,
+      monthlyPayment: monthlyPayment,
       monthlyDeduction: monthlyPayment,
       durationMonths: parsedDuration,
       remainingMonths: parsedDuration,
@@ -629,10 +629,8 @@ const unsubscribeCards = onSnapshot(
   }
 };
 
-  // 1. Declare the state for your Credit Modal
 const [isCreditModalVisible, setIsCreditModalVisible] = useState(false);
 
-// 2. Updated action handler
 const handleAction = (title: string) => {
   if (title === "Credit") {
     setIsCreditModalVisible(true);
@@ -664,7 +662,6 @@ const handleAction = (title: string) => {
   Alert.alert(title, `This feature is currently in a limited pilot phase, Thank you for your understanding!`);
 };
 
-  // Ensure closeCardModal is defined ONLY ONCE in the component
 const closeCardModal = () => {
   setIsCardModalVisible(false);
   setEditingCardId(null);
@@ -672,11 +669,13 @@ const closeCardModal = () => {
   setCardType("Debit");
   setCardLastFour("");
   setCardExpiry("");
+  setCardAmount("");
 };
 
 const handleSaveCard = async () => {
   if (!currentUser) return;
   const cleanLastFour = cardLastFour.replace(/\D/g, "");
+  const parsedAmount = parseFloat(cardAmount.replace(/[₱,]/g, "")) || 0;
   
   if (
     !cardName.trim() ||
@@ -697,6 +696,7 @@ const handleSaveCard = async () => {
       type: cardType,
       lastFour: cleanLastFour,
       expiry: cardExpiry,
+      amount: parsedAmount,
     };
 
     if (editingCardId) {
@@ -704,14 +704,34 @@ const handleSaveCard = async () => {
         doc(db, "users", currentUser.uid, "cards", editingCardId),
         cardData
       );
+      console.log(`[Card Log] Updated card ID ${editingCardId}:`, cardData);
     } else {
-      await addDoc(
+      const docRef = await addDoc(
         collection(db, "users", currentUser.uid, "cards"),
         {
           ...cardData,
           createdAt: new Date().toISOString(),
         }
       );
+
+      // Record card amount as transaction so it populates analytics and statements/documents
+      if (parsedAmount > 0) {
+        await addDoc(collection(db, "users", currentUser.uid, "transactions"), {
+          name: `Card Deposit: ${cardName.trim()}`,
+          amount: parsedAmount,
+          type: "Income",
+          category: "Card",
+          date: new Date().toISOString().split("T")[0],
+          time: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          description: `Initial balance for card •••• ${cleanLastFour}`,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      console.log(`[Card Log] Created new card ID ${docRef.id} with amount: ₱${parsedAmount}`, cardData);
     }
 
     const isEdit = Boolean(editingCardId);
@@ -735,6 +755,7 @@ const openEditCard = (card: SavedCard) => {
   setCardType(card.type);
   setCardLastFour(card.lastFour);
   setCardExpiry(card.expiry);
+  setCardAmount(card.amount !== undefined ? card.amount.toString() : "");
   setSelectedCard(null);
   setIsCardModalVisible(true);
 };
@@ -753,8 +774,6 @@ const deleteSelectedCard = async () => {
   }
 };
 
-
-// CREDIT SCORE
 const [creditScoreVisible, setCreditScoreVisible] = useState(false);
 const [information, setInformation] = useState(false);
 const [password, setPassword] = useState(false);
@@ -768,22 +787,15 @@ const [creditData, setCreditData] = useState<ComputedCreditData>({
   creditUtilizationPct: 0,
 });
 
-// Open Credit Score modal with LIVE database data
 const handleOpenCreditScore = async () => {
   try {
-    // Refresh the score before opening the modal
     await loadCreditScore();
-
     setCreditScoreVisible(true);
   } catch (error) {
     console.error("❌ Error opening credit score:", error);
-
-    // Still allow the modal to open using the last known values
     setCreditScoreVisible(true);
   }
 };
-
-
 
 const [creditScore, setCreditScore] = useState<number>(700);
 const [scoreCategory, setScoreCategory] = useState<string>("Good");
@@ -791,14 +803,10 @@ const [activeLoansCount, setActiveLoansCount] = useState<number>(0);
 const [onTimePayments, setOnTimePayments] = useState<number>(0);
 const [totalLoansCount, setTotalLoansCount] = useState<number>(0);
 
-// Load the latest credit score data from the database
 const loadCreditScore = useCallback(async () => {
   try {
     const data = await calculateCreditScoreFromDB();
-
     setCreditData(data);
-
-    console.log("📊 Credit Score Updated:", data);
   } catch (error) {
     console.error("❌ Error loading credit score:", error);
   }
@@ -810,7 +818,6 @@ const openCreditScore = async () => {
     const currentUser = auth.currentUser;
     if (!currentUser) return;
 
-    // 1. Fetch user loans from Firestore
     const userPath = `users/${currentUser.uid}`;
     const loansRef = collection(firestoreDb, userPath, "loans");
     const loansSnapshot = await getDocs(loansRef);
@@ -827,7 +834,6 @@ const openCreditScore = async () => {
       }
     });
 
-    // 2. Fetch loan deduction transactions to calculate payment history
     const transactionsRef = collection(firestoreDb, userPath, "transactions");
     const transSnapshot = await getDocs(transactionsRef);
     
@@ -839,30 +845,21 @@ const openCreditScore = async () => {
     const totalLoans = activeCount + completedCount;
     const paymentCount = loanPayments.length;
 
-    // 3. Dynamic Credit Score calculation algorithm (Range: 300 - 850)
-    let calculatedScore = 650; // Base baseline score
-
-    // Payment History Boost (+15 points per payment, max +120)
+    let calculatedScore = 650;
     calculatedScore += Math.min(paymentCount * 15, 120);
-
-    // Completed Loans Boost (+25 points per completed loan, max +100)
     calculatedScore += Math.min(completedCount * 25, 100);
 
-    // High Active Loans Penalty (-20 per excess active loan if over 2)
     if (activeCount > 2) {
       calculatedScore -= (activeCount - 2) * 20;
     }
 
-    // Clamp score strictly between 300 and 850
     const finalScore = Math.max(300, Math.min(850, calculatedScore));
 
-    // Determine Credit Rating Tier
     let category = "Poor";
     if (finalScore >= 750) category = "Excellent";
     else if (finalScore >= 700) category = "Good";
     else if (finalScore >= 650) category = "Fair";
 
-    // Set States
     setCreditScore(finalScore);
     setScoreCategory(category);
     setActiveLoansCount(activeCount);
@@ -879,10 +876,7 @@ const openCreditScore = async () => {
   const openAnalytics = async () => {
     setLoading(true);
     try {
-      // 1. Fetch local SQLite transactions
       const localTransactions = fetchTransactionsFromDB();
-
-      // 2. Fetch remote Firestore transactions (includes automatic loan deductions)
       const currentUser = auth.currentUser;
       let combinedTransactions = [...localTransactions];
 
@@ -896,7 +890,7 @@ const openCreditScore = async () => {
               const data = docSnap.data();
               return {
                 firestoreId: docSnap.id,
-                id: data.id,
+                id: Number(data.id) || Date.now() + Math.random(), // Ensure id is a number
                 name: data.name,
                 amount: Number(data.amount) || 0,
                 type: data.type,
@@ -907,13 +901,39 @@ const openCreditScore = async () => {
               };
             }
           );
-        // Deduplicate records present in both local SQLite and remote Firestore
+
+        // Fetch cards and map card amounts into transactions
+        const cardsRef = collection(firestoreDb, userPath, "cards");
+        const cardsSnapshot = await getDocs(cardsRef);
+        const cardTransactions: TransactionItem[] = cardsSnapshot.docs.map(
+          (docSnap, index) => {
+            const data = docSnap.data();
+            return {
+              firestoreId: `card-${docSnap.id}`,
+              id: Date.now() + index, // Ensure id is a unique number
+              name: `Card Balance: ${data.name || "Card"}`,
+              amount: Number(data.amount) || 0,
+              type: "Income",
+              category: "Card",
+              date: data.createdAt ? data.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
+              time: "12:00 PM",
+              loanId: null,
+            };
+          }
+        );
+
         const localIds = new Set(localTransactions.map((t) => t.id));
+        const remoteIds = new Set(remoteTransactions.map((t) => t.id || t.firestoreId));
+
         const newRemoteItems = remoteTransactions.filter(
           (rt) => !rt.id || !localIds.has(rt.id)
         );
 
-        combinedTransactions = [...localTransactions, ...newRemoteItems];
+        const newCardItems = cardTransactions.filter(
+          (ct) => !localIds.has(ct.id) && !remoteIds.has(ct.id)
+        );
+
+        combinedTransactions = [...localTransactions, ...newRemoteItems, ...newCardItems];
       }
 
       setTransactions(combinedTransactions);
@@ -939,7 +959,6 @@ const openCreditScore = async () => {
     analyticsStart.setMonth(0, 1);
   }
 
-  // Safe check for expense and automatic loan deduction types
   const isExpenseType = (type?: string) => {
     if (!type) return false;
     const normalized = type.toLowerCase();
@@ -955,7 +974,6 @@ const openCreditScore = async () => {
   const analyticsTransactions = transactions.filter((transaction) => {
     if (!transaction.date) return false;
 
-    // Handle standard YYYY-MM-DD as well as ISO date strings
     const dateParts = transaction.date.split("T")[0].split("-").map(Number);
     if (dateParts.length !== 3) return false;
 
@@ -1021,7 +1039,7 @@ const openCreditScore = async () => {
         onPress: async () => {
           try {
             await clearCardsFromDB();
-            setCards([]); // Update UI state
+            setCards([]);
             Alert.alert("Success", "All cards have been removed.");
           } catch (error) {
             Alert.alert("Error", "Failed to clear cards.");
@@ -1033,17 +1051,14 @@ const openCreditScore = async () => {
 };
 
 const openChangePassword = () => {
-    console.log("Opening Developer Modal"); // Debug log
     setPassword(true);
   };
 
 const openDeveloper = () => {
-    console.log("Opening Developer Modal"); // Debug log
     setDeveloper(true);
   };
 
 const openInformation = () => {
-    console.log("Opening Developer Modal"); // Debug log
     setInformation(true);
   };  
 
@@ -1056,7 +1071,6 @@ const openInformation = () => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* HEADER / PROFILE CARD */}
         <View style={styles.profileHeader}>
           <View style={styles.avatarContainer}>
             {profile.photoURL ? (
@@ -1098,7 +1112,6 @@ const openInformation = () => {
           </View>
         </View>
 
-        {/* QUICK ACTIONS */}
         <View style={styles.quickActionsContainer}>
           <TouchableOpacity 
             style={styles.actionButton} 
@@ -1181,7 +1194,6 @@ const openInformation = () => {
                       onChangeText={setLoanDuration}
                     />
 
-                    {/* Start Date Picker Button */}
                     <Text style={modalStyles.label}>Start Date</Text>
                     <TouchableOpacity
                       style={modalStyles.datePickerButton}
@@ -1201,7 +1213,6 @@ const openInformation = () => {
                       </Text>
                     </TouchableOpacity>
 
-                    {/* Date Picker Component */}
                     {showDatePicker && (
                       <DateTimePicker
                         value={loanStartDate}
@@ -1223,7 +1234,6 @@ const openInformation = () => {
                       />
                     )}
 
-                    {/* Dynamic Summary Card */}
                     <View style={modalStyles.summaryCard}>
                       <View style={modalStyles.summaryRow}>
                         <Text style={modalStyles.summaryLabel}>End Date:</Text>
@@ -1252,7 +1262,6 @@ const openInformation = () => {
                       </View>
                     </View>
 
-                    {/* Action Buttons */}
                     <View style={modalStyles.buttonContainer}>
                       <TouchableOpacity
                         style={[modalStyles.button, modalStyles.cancelButton]}
@@ -1306,7 +1315,6 @@ const openInformation = () => {
           </TouchableOpacity>
         </View>
 
-       {/* ACCOUNTS & CARDS OVERVIEW */}
 <View style={styles.sectionContainer}>
   <View style={styles.sectionHeader}>
     <Text style={styles.sectionTitle}>Accounts & Cards</Text>
@@ -1348,8 +1356,10 @@ const openInformation = () => {
             <Text style={styles.accountCardName}>{card.name}</Text>
             <Text style={styles.accountCardType}>{card.type} card</Text>
           </View>
-          <Text style={styles.accountBalance}>•••• {card.lastFour}</Text>
-          <Text style={styles.accountCardType}>Expires {card.expiry}</Text>
+          <Text style={styles.accountBalance}>
+            ₱{(card.amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </Text>
+          <Text style={styles.accountCardType}>•••• {card.lastFour} • Expires {card.expiry}</Text>
         </TouchableOpacity>
       ))}
     </ScrollView>
@@ -1360,7 +1370,6 @@ const openInformation = () => {
   )}
 </View>
 
-        {/* PREFERENCES & SECURITY */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Preferences & Security</Text>
           <View style={styles.settingCard}>
@@ -1419,7 +1428,6 @@ const openInformation = () => {
           </View>
         </View>
 
-        {/* ACCOUNT DETAILS */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Account Details</Text>
           <View style={styles.settingCard}>
@@ -1451,7 +1459,6 @@ const openInformation = () => {
           </View>
         </View>
 
-        {/* SECURITY DETAILS */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Security & Privacy</Text>
           <View style={styles.settingCard}>
@@ -1464,7 +1471,6 @@ const openInformation = () => {
           </View>
         </View>
 
-              {/* DEVELOPER DETAILS */}
       <View style={styles.sectionContainer}>
         <Text style={styles.sectionTitle}>Developer Details</Text>
         <View style={styles.settingCard}>
@@ -1487,7 +1493,6 @@ const openInformation = () => {
         </View>
       </View>
 
-      {/* MODAL POP-UPS */}
       <SystemInformationModal 
         visible={information} 
         onClose={() => setInformation(false)} 
@@ -1503,12 +1508,10 @@ const openInformation = () => {
         onClose={() => setPassword(false)} 
       />
 
-        {/* LOGOUT BUTTON */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutButtonText}>Log Out</Text>
         </TouchableOpacity>
 
-        {/* CLEAR BUTTON */}
         <TouchableOpacity style={styles.clearButton} onPress={handleClearCashe}>
           <Text style={styles.clearButtonText}>Clear Cashe</Text>
         </TouchableOpacity>
@@ -1689,6 +1692,16 @@ const openInformation = () => {
                   ))}
                 </View>
 
+                <Text style={styles.inputLabel}>Amount (₱)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={cardAmount}
+                  onChangeText={setCardAmount}
+                  placeholder="0.00"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="numeric"
+                />
+
                 <Text style={styles.inputLabel}>Last four digits</Text>
                 <TextInput
                   style={styles.input}
@@ -1785,7 +1798,6 @@ const openInformation = () => {
         </View>
       </Modal>
 
-      {/* EDIT PROFILE MODAL */}
       <Modal
         visible={isEditModalVisible}
         animationType="slide"
@@ -2473,8 +2485,6 @@ const styles = StyleSheet.create({
     color: '#64748b',
     lineHeight: 24,
   },
-
-  // Gauge specific styles
   gaugeContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -2507,8 +2517,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#94a3b8',
   },
-
-  // 3-Card Row layout styles
   cardsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -69,7 +69,7 @@ export default function StatementsScreen() {
         const localTransactions = fetchTransactionsFromDB();
         let combinedTransactions = [...localTransactions];
 
-        // 3. Fetch remote Firestore transactions (includes auto loan deductions)
+        // 3. Fetch remote Firestore transactions and cards
         const currentUser = auth.currentUser;
         if (currentUser) {
           try {
@@ -82,7 +82,7 @@ export default function StatementsScreen() {
                 const data = docSnap.data();
                 return {
                   firestoreId: docSnap.id,
-                  id: data.id,
+                  id: Number(data.id) || Date.now() + Math.random(), // Ensure id is a number
                   name: data.name,
                   amount: Number(data.amount) || 0,
                   type: data.type,
@@ -94,15 +94,35 @@ export default function StatementsScreen() {
               }
             );
 
-            // Deduplicate items present in both SQLite and Firestore
+            // Fetch cards and map card amounts into statements
+            const cardsRef = collection(firestoreDb, userPath, "cards");
+            const cardsSnapshot = await getDocs(cardsRef);
+            const cardTransactions: TransactionItem[] = cardsSnapshot.docs.map(
+              (docSnap, index) => {
+                const data = docSnap.data();
+                return {
+                  firestoreId: `card-${docSnap.id}`,
+                  id: Date.now() + index, // Ensure id is a unique number
+                  name: `Card Balance: ${data.name || "Card"}`,
+                  amount: Number(data.amount) || 0,
+                  type: "Income",
+                  category: "Card",
+                  date: data.createdAt ? data.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
+                  time: "12:00 PM",
+                  loanId: null,
+                };
+              }
+            );
+
+            // Deduplicate items present in both SQLite and Firestore transactions
             const localIds = new Set(localTransactions.map((t) => t.id));
             const newRemoteItems = remoteTransactions.filter(
               (rt) => !rt.id || !localIds.has(rt.id)
             );
 
-            combinedTransactions = [...localTransactions, ...newRemoteItems];
+            combinedTransactions = [...localTransactions, ...newRemoteItems, ...cardTransactions];
           } catch (error) {
-            console.error("Error syncing Firestore transactions for statements:", error);
+            console.error("Error syncing Firestore transactions/cards for statements:", error);
           }
         }
 
