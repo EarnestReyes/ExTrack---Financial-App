@@ -1,0 +1,339 @@
+{
+  "routes": [
+    "src/app/index.tsx",
+    "src/app/register.tsx",
+    "src/app/forgotPass.tsx",
+    "src/app/(tabs)/home.tsx",
+    "src/app/(tabs)/explore.tsx",
+    "src/app/statements.tsx",
+    "src/app/help.tsx",
+    "src/app/ChatSupport.tsx",
+    "src/app/_layout.tsx",
+    "src/app/(tabs)/_layout.tsx"
+  ],
+  "unchanged": {
+    "app.json": "361f7fee2544795bf9f93b16b9796d8575c2d75efa6ab9ab44fe8c0144761577",
+    "metro.config.js": "6b9f4f4d99d48cc97845cbc462c7a321bb52951c80874e23af469ab3917c8ac1",
+    "firebase.json": "528e074c5600bf1cc8742eb54401b732bbdbc23e9cbd7bf6371600138392cea6",
+    "firestore.rules": "371d244e39eb7577c78fc259710dc162c4d7d7a24aac9fe47f65e8d360d1e660",
+    "src/domain/finance.ts": "35d1824ca39f8cffcc73aacd8d4ff9a0d00538c7db79ae01c30f0300952f682b",
+    "package.json": "4c9267cd9df32507ee4a8e7a095c21fbb514867537697145aaa735ca83be4608",
+    "package-lock.json": "315de34f38233af4e6289cb4a7a2d7d4d1a787618b4d6734095d978961aef89b"
+  },
+  "moves": {
+    "src/app/index.tsx": "src/features/auth/screens/LoginScreen.tsx",
+    "src/app/register.tsx": "src/features/auth/screens/RegisterScreen.tsx",
+    "src/app/forgotPass.tsx": "src/features/auth/screens/ForgotPasswordScreen.tsx",
+    "src/app/(tabs)/home.tsx": "src/features/dashboard/screens/DashboardScreen.tsx",
+    "src/app/(tabs)/explore.tsx": "src/features/profile/screens/ProfileScreen.tsx",
+    "src/app/statements.tsx": "src/features/statements/screens/StatementsScreen.tsx",
+    "src/app/help.tsx": "src/features/settings/screens/HelpScreen.tsx",
+    "src/app/ChatSupport.tsx": "src/features/ai-chat/components/ChatSupport.tsx",
+    "src/config/firebase.ts": "src/services/firebase/client.ts",
+    "src/services/supportService.ts": "src/services/ai/supportService.ts",
+    "src/services/emailService.ts": "src/services/email/emailService.ts",
+    "src/services/biometricService.ts": "src/services/biometrics/biometricService.ts",
+    "src/services/legacyStorage.ts": "src/database/legacyStorage.ts",
+    "src/components/ChangePasswordModal.tsx": "src/features/auth/components/ChangePasswordModal.tsx",
+    "src/components/CreditScoreModal.tsx": "src/features/credit-score/components/CreditScoreModal.tsx",
+    "src/components/DeveloperModal.tsx": "src/features/settings/components/DeveloperModal.tsx",
+    "src/components/SystemInformationModal.tsx": "src/features/settings/components/SystemInformationModal.tsx",
+    "src/utils/creditScore.ts": "src/features/credit-score/services/creditScore.ts",
+    "src/components/app-tabs.tsx": "src/components/layout/app-tabs.tsx",
+    "src/components/app-tabs.web.tsx": "src/components/layout/app-tabs.web.tsx",
+    "src/components/themed-text.tsx": "src/components/ui/themed-text.tsx",
+    "src/components/themed-view.tsx": "src/components/ui/themed-view.tsx",
+    "src/components/external-link.tsx": "src/components/ui/external-link.tsx",
+    "src/components/hint-row.tsx": "src/components/ui/hint-row.tsx",
+    "src/components/web-badge.tsx": "src/components/ui/web-badge.tsx",
+    "src/components/animated-icon.tsx": "src/components/ui/animated-icon.tsx",
+    "src/components/animated-icon.web.tsx": "src/components/ui/animated-icon.web.tsx",
+    "src/components/animated-icon.module.css": "src/components/ui/animated-icon.module.css"
+  },
+  "databaseDeclarations": [
+    {
+      "name": "TransactionItem",
+      "hash": "ec44a363897b63520921321ee6555afbc8617541530f3bb7bc9ac0e86db52749"
+    },
+    {
+      "name": "LoanItem",
+      "hash": "61d601698b9fedf12dd7c4227f10e03c95ee03487f7c38118d7419fe05157918"
+    },
+    {
+      "name": "SavedCard",
+      "hash": "4dccac0a032f4f915739a2d5f1c66cfd006ba2ad7378a3ce7a13de7dd13a8232"
+    },
+    {
+      "name": "listeners",
+      "hash": "63aca32c5e69976ce7a18b476679139f6164addbca856d6b871ce5be0dbb9751"
+    },
+    {
+      "name": "subscribeFinancialData",
+      "hash": "a133fbbb5c001c5869cfc9fcfa62ff86767c0adc28723363c4faf7daee3d6579"
+    },
+    {
+      "name": "changed",
+      "hash": "a9a61f913e17dca0cb241e4b8a640711d7af3c3e73ef1a765932f4713be101ce"
+    },
+    {
+      "name": "owner",
+      "hash": "c17162f2c38494f672b9a80fa0e93296638eeeab9c9a5cf4dc8eb66d729e5502"
+    },
+    {
+      "name": "assertOwner",
+      "hash": "ad25f14961d466ef4229e11cb237c3de22d9c6d7a7905c4245e93ec3f63fa47a"
+    },
+    {
+      "name": "getCurrentUser",
+      "hash": "c42a63975c31556afc5a0e139960c981f8d47084c5141774c63b5365e151c89e"
+    },
+    {
+      "name": "initDatabase",
+      "hash": "97cd1d307b5822dcba6a0e798115bfb411ee99224bbcb8d19aafeabf2a2daf55"
+    },
+    {
+      "name": "fetchTransactionsFromDB",
+      "hash": "32875f2ee5c34a2eb6e1782f2f449417df857d97950daf7bef869ad4d009a6e8"
+    },
+    {
+      "name": "fetchLoansFromDB",
+      "hash": "21d7c11ddbce2bc95191cf6405794fa8201321dac8b0634a05df5c4277cdf887"
+    },
+    {
+      "name": "fetchCardsFromDB",
+      "hash": "154560f2a3cf21eefb0c6c2eceb9efc00aa4cdba9d2cf8ba368c4a95e730f905"
+    },
+    {
+      "name": "path",
+      "hash": "3260c294a9f7fbba28350b60fbc596f24b706d809230dd27c4f0e49449b5f6c8"
+    },
+    {
+      "name": "newId",
+      "hash": "8d2cfdc3472bc2732e1cdfc35bebc3d6a0a065e29c3c203baf54b8b23c1eaa92"
+    },
+    {
+      "name": "activeSync",
+      "hash": "9093c9f74c50b9c906b858e81fd6a86558ba2ce674f5341f394a51ae2ab04aab"
+    },
+    {
+      "name": "syncAgain",
+      "hash": "eafd65e3a09446f8e8a22beb29033d16219e6efd64b98385bee8fc028d24646d"
+    },
+    {
+      "name": "SyncState",
+      "hash": "7202cec7bb5bafed907171c05af3e8f0c7693d5eaed4ed170788fa672c12ff3f"
+    },
+    {
+      "name": "syncState",
+      "hash": "3a9ab6d907cb96ee4f56fc9976d7d1c4aa854b6f930f15be341140b81126e716"
+    },
+    {
+      "name": "getSyncState",
+      "hash": "d097cb96eddd2d1c77526d80198a153975876f649970b9812aba418ad93aa0b7"
+    },
+    {
+      "name": "push",
+      "hash": "cc9ba121b59f1193b37181f7ec34e332e62c57913a41164a6c7fdced0eabce62"
+    },
+    {
+      "name": "processSyncQueue",
+      "hash": "ffba55246edf0e7ccc270990997763e988a89dff772579854f7cd110b420e5a5"
+    },
+    {
+      "name": "syncFromFirestore",
+      "hash": "6949f444020d70e4a8733e63e284733bbb153f826f26da9e620f650c4ec065e3"
+    },
+    {
+      "name": "save",
+      "hash": "4f68bbf012baebff12e0fd38b14383be3bc0782c8d41b2268f2df112172b902d"
+    },
+    {
+      "name": "ownedRecord",
+      "hash": "05eeeb63ac7e1038bbdff9aac794335fa6adec4fb750f4851be684da411f5bd7"
+    },
+    {
+      "name": "transactionPayload",
+      "hash": "f4923b1d7cf6bb90831d0528696d08c5c6f073b4f088a08171a0e1340307f050"
+    },
+    {
+      "name": "insertTransactionToDB",
+      "hash": "d3a3a7729c35c6e32d358ff51c266376454c4fdcac0bee8b5253f208d09bf70e"
+    },
+    {
+      "name": "updateTransactionInDB",
+      "hash": "a4fb36f0ff11fcc05a605b5e74f44415c45f2d3366b00da7cd293c704d229616"
+    },
+    {
+      "name": "deleteTransactionFromDB",
+      "hash": "3115c57b4ec80b3124b033d2521134f5ef080d213ca9642217b151c73509234d"
+    },
+    {
+      "name": "insertLoanToDB",
+      "hash": "f5469817c2a790f8c9ce84c0985d18bc76ee8454a677d4a833d3ad95e7485c9a"
+    },
+    {
+      "name": "updateLoanInDB",
+      "hash": "ee0bfd59fa4d400274830449dbb6a52041c443c5aece94104f0b10d2cb32a089"
+    },
+    {
+      "name": "deleteLoanFromDB",
+      "hash": "9fc179866917f07a7796b23dd6c6f72d1029936c868b8e3d9f8b0f19ba3d9374"
+    },
+    {
+      "name": "deleteMasterLoanFromDB",
+      "hash": "25ce7d4d3d9ee957cdc4bdeeccc801287f47d19803d2a61334ba83dfead06d76"
+    },
+    {
+      "name": "confirmLoanInstallment",
+      "hash": "342bac81455761934128e44a0230bbc7732e4ec618a61a7cd27816c289711fe9"
+    },
+    {
+      "name": "insertCardToDB",
+      "hash": "d92e35c584357d4e7a426d4a3e925d829bb3e54c7a4d13cd2da50c61ed311895"
+    },
+    {
+      "name": "updateCardInDB",
+      "hash": "5f1d1d5c753e3726c32a1b9b035da039872da2af56ce1641e7e4035b14a8067d"
+    },
+    {
+      "name": "validateCard",
+      "hash": "e5c49cb04b60023c22bc8c247497f27428ab70496245ffc64b24e7534bb6acee"
+    },
+    {
+      "name": "deleteCardFromDB",
+      "hash": "e57e7c3f8a4f82fb9b64b0dfb3987bbec4ae05668ba4ad65347395de7df12e79"
+    },
+    {
+      "name": "clearCardsFromDB",
+      "hash": "de249f6ef0dcb113a9eb82869af5aacceb553e3836dcfa72e97f0cc582b185a3"
+    },
+    {
+      "name": "clearAllDataAndDatabase",
+      "hash": "e91a94b30fb2dd51d48e75fd4560672b06adaa1be705c0b17d5073117999535a"
+    },
+    {
+      "name": "getUserProfilePicture",
+      "hash": "360d10b4beb92f15c0e570de492b578daa9096e239aedaef2b30548c1e717082"
+    },
+    {
+      "name": "cacheUserProfile",
+      "hash": "391e5b8d448a9ed53197aac7a6f2790eb52ad5bc612f4b84f8a3a92589a77d47"
+    },
+    {
+      "name": "setUserProfilePicture",
+      "hash": "008ec1c4dab1b3f66c5f54e5cf56a5f94cecdee343b1b0f64cdea790877b0db5"
+    },
+    {
+      "name": "getInitials",
+      "hash": "a7bbe0798af8fe991671dd5eb9f728b909b2993833cb4637d75a4056158bb4f0"
+    },
+    {
+      "name": "preferences",
+      "hash": "2e4a0fb3124f64c349fcf08e387543727a32da65b4c5482c91e124f785b67f73"
+    },
+    {
+      "name": "prefs",
+      "hash": "3133822979df61bb1511eff6d6303b062bc0ce9db03cd8feb94bdfa2afb91092"
+    },
+    {
+      "name": "getThemePreference",
+      "hash": "2c655cf2c7529b2270de9257b855c3ebde5833f385349bed97950e729d26fb98"
+    },
+    {
+      "name": "setThemePreference",
+      "hash": "a0bb3333044b5979381a97ffd283bf9c292ce238c689d4b15ff479100ba620e5"
+    },
+    {
+      "name": "CreditScoreMetrics",
+      "hash": "b9b6ea421cbb3def55f0d1e7a40709ff6d3e78b2f8ed8468764540b9b16b7a77"
+    },
+    {
+      "name": "fetchCreditScoreMetricsFromFirestore",
+      "hash": "2c829b0170cafa43fa4a326a2cefa26490f29f802af647c2abe71333baf9d144"
+    },
+    {
+      "name": "saveCreditScoreToFirestore",
+      "hash": "1684403cfbda208d86a773cab42eff744728ff0bc0f1a5ef9f61b1dc22ac8608"
+    },
+    {
+      "name": "watchFinancialData",
+      "hash": "ad49b014c532d4d7255f4bb0f94c78de973a2caaf0325cceadec2c41c8bc506e"
+    }
+  ],
+  "schemaHash": "3b4e0c9153d1fd87280f96d4ecfb21bebda181942085bd2af2afe2297985d416",
+  "styleExtractions": [
+    {
+      "screen": "src/features/auth/screens/LoginScreen.tsx",
+      "styles": "src/features/auth/styles/LoginScreen.styles.ts",
+      "names": [
+        "createStyles"
+      ]
+    },
+    {
+      "screen": "src/features/auth/screens/RegisterScreen.tsx",
+      "styles": "src/features/auth/styles/RegisterScreen.styles.ts",
+      "names": [
+        "createStyles"
+      ]
+    },
+    {
+      "screen": "src/features/auth/screens/ForgotPasswordScreen.tsx",
+      "styles": "src/features/auth/styles/ForgotPasswordScreen.styles.ts",
+      "names": [
+        "createStyles"
+      ]
+    },
+    {
+      "screen": "src/features/dashboard/screens/DashboardScreen.tsx",
+      "styles": "src/features/dashboard/styles/DashboardScreen.styles.ts",
+      "names": [
+        "createStyles"
+      ]
+    },
+    {
+      "screen": "src/features/profile/screens/ProfileScreen.tsx",
+      "styles": "src/features/profile/styles/ProfileScreen.styles.ts",
+      "names": [
+        "createStyles",
+        "createModalStyles",
+        "styles"
+      ]
+    },
+    {
+      "screen": "src/features/statements/screens/StatementsScreen.tsx",
+      "styles": "src/features/statements/styles/StatementsScreen.styles.ts",
+      "names": [
+        "createStyles"
+      ]
+    },
+    {
+      "screen": "src/features/settings/screens/HelpScreen.tsx",
+      "styles": "src/features/settings/styles/HelpScreen.styles.ts",
+      "names": [
+        "createStyles"
+      ]
+    }
+  ],
+  "functionDeclarations": [
+    {
+      "name": "supportChat",
+      "hash": "496d35ad61d0d7b5848812dd9343e2473fcc3b0da5c9dc39a5ebc4728962c883"
+    },
+    {
+      "name": "sendLowBalanceAlert",
+      "hash": "c517337e2d6be5b2f6c716cae4d5a8081240eabab948cda362d110a20958c883"
+    },
+    {
+      "name": "confirmLoanPayment",
+      "hash": "8ad260157dd0b10d038a81ea835c7e572291127cf79ea848b05e164db9843340"
+    }
+  ],
+  "removed": [
+    "src/components/ui/animated-icon.tsx",
+    "src/components/ui/animated-icon.web.tsx",
+    "src/components/ui/animated-icon.module.css",
+    "src/components/ui/hint-row.tsx",
+    "src/components/ui/web-badge.tsx",
+    "src/components/ui/collapsible.tsx"
+  ]
+}
