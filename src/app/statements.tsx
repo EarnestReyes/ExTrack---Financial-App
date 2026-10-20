@@ -1,6 +1,15 @@
+import { auth, db as firestoreDb } from "@/config/firebase";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import * as PdfTextExtract from "expo-pdf-text-extract";
 import { useFocusEffect, useRouter } from "expo-router";
+import { collection, getDocs, QueryDocumentSnapshot } from "firebase/firestore";
+import Papa from "papaparse";
 import { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,8 +18,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { collection, getDocs, QueryDocumentSnapshot } from "firebase/firestore";
-import { auth, db as firestoreDb } from "@/config/firebase";
 import {
   fetchTransactionsFromDB,
   getThemePreference,
@@ -19,23 +26,48 @@ import {
 
 type StatementPeriod = "This Month" | "This Year" | "All Time";
 
-// Safe date parser handling YYYY-MM-DD, ISO strings, and slashes
-const parseTransactionDate = (dateStr?: string): Date | null => {
+const parseCustomBankDate = (
+  dateStr?: string,
+  fallbackYear = new Date().getFullYear(),
+): Date | null => {
   if (!dateStr) return null;
 
-  const cleanDateStr = dateStr.includes("T") ? dateStr.split("T")[0] : dateStr;
-  const parts = cleanDateStr.split(/[-/]/).map(Number);
+  try {
+    const cleaned = dateStr.split(",")[0].trim();
+    const parts = cleaned.split(" ");
 
-  if (parts.length === 3 && !parts.some(isNaN)) {
-    const [year, month, day] = parts;
-    return new Date(year, month - 1, day);
+    if (parts.length >= 2) {
+      const day = parseInt(parts[0], 10);
+      const monthStr = parts[1].toLowerCase();
+
+      const months: { [key: string]: number } = {
+        jan: 0,
+        feb: 1,
+        mar: 2,
+        apr: 3,
+        may: 4,
+        jun: 5,
+        jul: 6,
+        aug: 7,
+        sep: 8,
+        oct: 9,
+        nov: 10,
+        dec: 11,
+      };
+
+      const monthKey = monthStr.substring(0, 3);
+      if (months[monthKey] !== undefined && !isNaN(day)) {
+        return new Date(fallbackYear, months[monthKey], day);
+      }
+    }
+  } catch (e) {
+    // Fallback
   }
 
-  const fallbackDate = new Date(dateStr);
-  return isNaN(fallbackDate.getTime()) ? null : fallbackDate;
+  const fallback = new Date(dateStr);
+  return isNaN(fallback.getTime()) ? null : fallback;
 };
 
-// Helper function to identify expense/deduction transaction types
 const isExpenseType = (type?: string) => {
   if (!type) return false;
   const normalized = type.toLowerCase();
@@ -44,7 +76,8 @@ const isExpenseType = (type?: string) => {
     normalized === "loan" ||
     normalized === "loan payment" ||
     normalized === "loan deduction" ||
-    normalized === "deduction"
+    normalized === "deduction" ||
+    normalized === "debit"
   );
 };
 
@@ -52,86 +85,295 @@ export default function StatementsScreen() {
   const router = useRouter();
   const systemColorScheme = useColorScheme();
   const [isDarkMode, setIsDarkMode] = useState(systemColorScheme === "dark");
-  const [period, setPeriod] = useState<StatementPeriod>("This Month");
+  const [period, setPeriod] = useState<StatementPeriod>("All Time");
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [parsedRows, setParsedRows] = useState<any[]>([]);
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
+
   const styles = createStyles(isDarkMode);
+
+  const loadTransactionsData = useCallback(async () => {
+    const savedTheme = getThemePreference();
+    setIsDarkMode(
+      savedTheme ? savedTheme === "dark" : systemColorScheme === "dark",
+    );
+
+    const localTransactions = fetchTransactionsFromDB();
+    let combinedTransactions = [...localTransactions];
+
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      try {
+        const userPath = `users/${currentUser.uid}`;
+        const transactionsRef = collection(
+          firestoreDb,
+          userPath,
+          "transactions",
+        );
+        const snapshot = await getDocs(transactionsRef);
+
+        const remoteTransactions: TransactionItem[] = snapshot.docs.map(
+          (docSnap: QueryDocumentSnapshot) => {
+            const data = docSnap.data();
+            return {
+              firestoreId: docSnap.id,
+              id: Number(data.id) || Date.now() + Math.random(),
+              name: data.name,
+              amount: Number(data.amount) || 0,
+              type: data.type,
+              category: data.category,
+              date: data.date,
+              time: data.time,
+              loanId: data.loanId || null,
+            };
+          },
+        );
+
+        const cardsRef = collection(firestoreDb, userPath, "cards");
+        const cardsSnapshot = await getDocs(cardsRef);
+        const cardTransactions: TransactionItem[] = cardsSnapshot.docs.map(
+          (docSnap, index) => {
+            const data = docSnap.data();
+            return {
+              firestoreId: `card-${docSnap.id}`,
+              id: Date.now() + index,
+              name: `Card Balance: ${data.name || "Card"}`,
+              amount: Number(data.amount) || 0,
+              type: "Income",
+              category: "Card",
+              date: data.createdAt
+                ? data.createdAt.split("T")[0]
+                : new Date().toISOString().split("T")[0],
+              time: "12:00 PM",
+              loanId: null,
+            };
+          },
+        );
+
+        const localIds = new Set(localTransactions.map((t) => t.id));
+        const newRemoteItems = remoteTransactions.filter(
+          (rt) => !rt.id || !localIds.has(rt.id),
+        );
+
+        combinedTransactions = [
+          ...localTransactions,
+          ...newRemoteItems,
+          ...cardTransactions,
+        ];
+      } catch (error) {
+        console.error("Error syncing Firestore transactions/cards:", error);
+      }
+    }
+
+    setTransactions(combinedTransactions);
+  }, [systemColorScheme]);
 
   useFocusEffect(
     useCallback(() => {
-      const loadTransactions = async () => {
-        // 1. Get saved theme
-        const savedTheme = getThemePreference();
-        setIsDarkMode(
-          savedTheme ? savedTheme === "dark" : systemColorScheme === "dark"
+      loadTransactionsData();
+    }, [loadTransactionsData]),
+  );
+
+  const handlePickDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+
+      console.log("📄 DocumentPicker Full Result:", JSON.stringify(result));
+
+      if (result.canceled || !result.assets || result.assets.length === 0)
+        return;
+
+      const fileAsset = result.assets[0];
+      const fileNameLower = fileAsset.name.toLowerCase();
+
+      console.log("📂 File Name:", fileAsset.name);
+      console.log("🔗 File URI:", fileAsset.uri);
+      console.log("📋 MIME Type:", fileAsset.mimeType);
+
+      setSelectedFileName(fileAsset.name);
+      setIsProcessing(true);
+
+      if (fileNameLower.endsWith(".pdf")) {
+        try {
+          const rawText = await PdfTextExtract.extractText(fileAsset.uri);
+          const lines = rawText.split("\n");
+          const extractedRows: any[] = [];
+
+          lines.forEach((line: string) => {
+            const hasDate =
+              /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(line);
+            const amounts = line.match(/[\d,]+\.\d{2}/g);
+
+            if (hasDate && amounts) {
+              extractedRows.push({
+                "Date and time": line.substring(0, 18).trim(),
+                Description: line.trim(),
+                "Amount (PHP)": amounts[0],
+              });
+            }
+          });
+
+          setIsProcessing(false);
+          if (extractedRows.length > 0) {
+            setParsedRows(extractedRows);
+            Alert.alert(
+              "PDF Parsed",
+              `Extracted ${extractedRows.length} potential transactions.`,
+            );
+          } else {
+            Alert.alert(
+              "No Data",
+              "Could not find valid transactions in this PDF.",
+            );
+          }
+        } catch (pdfErr: any) {
+          console.error("PDF Parsing Error:", pdfErr);
+          setIsProcessing(false);
+          Alert.alert(
+            "PDF Error",
+            "Failed to extract text. Ensure you are using a Development Build.",
+          );
+        }
+        return;
+      }
+
+      if (fileNameLower.endsWith(".csv") || fileNameLower.endsWith(".txt")) {
+        const fileText = await FileSystem.readAsStringAsync(fileAsset.uri);
+        Papa.parse(fileText, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (results) => {
+            setIsProcessing(false);
+            if (results.data && results.data.length > 0) {
+              setParsedRows(results.data);
+            } else {
+              Alert.alert("Empty File", "No rows found in CSV.");
+            }
+          },
+          error: (error: Error) => {
+            setIsProcessing(false);
+            Alert.alert("CSV Error", error.message);
+          },
+        });
+        return;
+      }
+
+      setIsProcessing(false);
+      Alert.alert(
+        "Unsupported File",
+        `Selected file name: "${fileAsset.name}" does not end with .pdf or .csv`,
+      );
+    } catch (error: any) {
+      console.error("Picker Error:", error);
+      setIsProcessing(false);
+      Alert.alert("Error", error?.message || "Failed to read file.");
+    }
+  };
+
+  const handleConfirmImport = () => {
+    if (parsedRows.length === 0) {
+      Alert.alert("No Data", "Please select a valid statement file first.");
+      return;
+    }
+
+    try {
+      let importedCount = 0;
+      const newItems: TransactionItem[] = [];
+
+      let targetYear = new Date().getFullYear();
+      if (selectedFileName) {
+        const yearMatch = selectedFileName.match(/20\d{2}/);
+        if (yearMatch) targetYear = parseInt(yearMatch[0], 10);
+      }
+
+      parsedRows.forEach((row, index) => {
+        const keys = Object.keys(row as object);
+        if (keys.length === 0) return;
+
+        const findValue = (targets: string[]) => {
+          for (const k of keys) {
+            const cleanKey = k.toLowerCase().trim();
+            if (targets.some((t) => cleanKey.includes(t))) {
+              return row[k];
+            }
+          }
+          return undefined;
+        };
+
+        const rawDate = findValue(["date and time", "date", "timestamp"]);
+        const rawName = findValue(["description", "particulars", "details"]);
+        const rawAmountStr = findValue([
+          "amount (php)",
+          "amount",
+          "amt",
+          "value",
+        ]);
+
+        const cleanAmount = parseFloat(
+          String(rawAmountStr || "0").replace(/[,₱PHP]/g, ""),
         );
 
-        // 2. Fetch local SQLite transactions
-        const localTransactions = fetchTransactionsFromDB();
-        let combinedTransactions = [...localTransactions];
+        if (!isNaN(cleanAmount) && cleanAmount !== 0) {
+          let formattedDate = new Date().toISOString().split("T")[0];
+          let extractedTime = "12:00 PM";
 
-        // 3. Fetch remote Firestore transactions and cards
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-          try {
-            const userPath = `users/${currentUser.uid}`;
-            const transactionsRef = collection(firestoreDb, userPath, "transactions");
-            const snapshot = await getDocs(transactionsRef);
-
-            const remoteTransactions: TransactionItem[] = snapshot.docs.map(
-              (docSnap: QueryDocumentSnapshot) => {
-                const data = docSnap.data();
-                return {
-                  firestoreId: docSnap.id,
-                  id: Number(data.id) || Date.now() + Math.random(), // Ensure id is a number
-                  name: data.name,
-                  amount: Number(data.amount) || 0,
-                  type: data.type,
-                  category: data.category,
-                  date: data.date,
-                  time: data.time,
-                  loanId: data.loanId || null,
-                };
-              }
-            );
-
-            // Fetch cards and map card amounts into statements
-            const cardsRef = collection(firestoreDb, userPath, "cards");
-            const cardsSnapshot = await getDocs(cardsRef);
-            const cardTransactions: TransactionItem[] = cardsSnapshot.docs.map(
-              (docSnap, index) => {
-                const data = docSnap.data();
-                return {
-                  firestoreId: `card-${docSnap.id}`,
-                  id: Date.now() + index, // Ensure id is a unique number
-                  name: `Card Balance: ${data.name || "Card"}`,
-                  amount: Number(data.amount) || 0,
-                  type: "Income",
-                  category: "Card",
-                  date: data.createdAt ? data.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
-                  time: "12:00 PM",
-                  loanId: null,
-                };
-              }
-            );
-
-            // Deduplicate items present in both SQLite and Firestore transactions
-            const localIds = new Set(localTransactions.map((t) => t.id));
-            const newRemoteItems = remoteTransactions.filter(
-              (rt) => !rt.id || !localIds.has(rt.id)
-            );
-
-            combinedTransactions = [...localTransactions, ...newRemoteItems, ...cardTransactions];
-          } catch (error) {
-            console.error("Error syncing Firestore transactions/cards for statements:", error);
+          if (rawDate) {
+            const dateStrVal = String(rawDate);
+            if (dateStrVal.includes(",")) {
+              extractedTime = dateStrVal.split(",")[1].trim();
+            }
+            const parsed = parseCustomBankDate(dateStrVal, targetYear);
+            if (parsed) {
+              formattedDate = parsed.toISOString().split("T")[0];
+            }
           }
+
+          const isInc = cleanAmount > 0;
+          const normalizedItem: TransactionItem = {
+            id: Date.now() + index + Math.random(),
+            name: rawName
+              ? String(rawName).trim().split("\n")[0]
+              : "Bank Statement Item",
+            amount: Math.abs(cleanAmount),
+            type: isInc ? "Income" : "Expense",
+            category: "Bank Import",
+            date: formattedDate,
+            time: extractedTime,
+            loanId: null,
+          };
+
+          newItems.push(normalizedItem);
+          importedCount++;
         }
+      });
 
-        setTransactions(combinedTransactions);
-      };
+      if (importedCount > 0) {
+        setTransactions((prev) => [...newItems, ...prev]);
+        setPeriod("All Time");
+        Alert.alert(
+          "Success",
+          `Successfully imported ${importedCount} transaction rows!`,
+        );
+      } else {
+        Alert.alert(
+          "Import Warning",
+          "Could not detect matching columns or rows.",
+        );
+      }
 
-      loadTransactions();
-    }, [systemColorScheme])
-  );
+      setIsModalVisible(false);
+      setParsedRows([]);
+      setSelectedFileName(null);
+    } catch (error: any) {
+      Alert.alert("Import Failed", error?.message || "An error occurred.");
+    }
+  };
 
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -140,7 +382,7 @@ export default function StatementsScreen() {
   const filteredTransactions = transactions.filter((transaction) => {
     if (period === "All Time") return true;
 
-    const transactionDate = parseTransactionDate(transaction.date);
+    const transactionDate = parseCustomBankDate(transaction.date);
     if (!transactionDate) return false;
 
     if (period === "This Year") {
@@ -162,6 +404,7 @@ export default function StatementsScreen() {
     .reduce((total, transaction) => total + transaction.amount, 0);
 
   const netChange = incoming - outgoing;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <ScrollView
@@ -172,7 +415,6 @@ export default function StatementsScreen() {
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
-            accessibilityLabel="Go back"
           >
             <Text style={styles.backIcon}>‹</Text>
           </TouchableOpacity>
@@ -183,6 +425,13 @@ export default function StatementsScreen() {
               Review your financial activity in one place.
             </Text>
           </View>
+
+          <TouchableOpacity
+            style={styles.importHeaderButton}
+            onPress={() => setIsModalVisible(true)}
+          >
+            <Text style={styles.importHeaderButtonText}>+ Import</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.periodRow}>
@@ -271,22 +520,79 @@ export default function StatementsScreen() {
           <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>No records for this period</Text>
             <Text style={styles.emptyText}>
-              Transactions you add will appear here automatically.
+              Transactions you add or import will appear here automatically.
             </Text>
           </View>
         )}
+      </ScrollView>
 
-        <View style={styles.documentNote}>
-          <Text style={styles.documentIcon}>▤</Text>
-          <View style={styles.documentCopy}>
-            <Text style={styles.documentTitle}>Digital records</Text>
-            <Text style={styles.documentText}>
-              Your statement activity is stored locally and updates whenever you
-              add, edit, or delete a transaction.
+      <Modal
+        visible={isModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Import Statement File</Text>
+            <Text style={styles.modalSubtitle}>
+              Upload either a Maya PDF statement or a CSV spreadsheet export.
             </Text>
+
+            <TouchableOpacity
+              style={styles.filePickerBox}
+              onPress={handlePickDocument}
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <ActivityIndicator size="small" color="#2563eb" />
+              ) : (
+                <>
+                  <Text style={styles.filePickerIcon}>📂</Text>
+                  <Text style={styles.filePickerText}>
+                    {selectedFileName
+                      ? selectedFileName
+                      : "Tap to browse PDF or CSV files"}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {parsedRows.length > 0 && (
+              <View style={styles.previewContainer}>
+                <Text style={styles.previewTitle}>
+                  Preview: {parsedRows.length} rows found
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => {
+                  setIsModalVisible(false);
+                  setParsedRows([]);
+                  setSelectedFileName(null);
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.modalButton,
+                  styles.confirmButton,
+                  parsedRows.length === 0 && styles.disabledButton,
+                ]}
+                onPress={handleConfirmImport}
+                disabled={parsedRows.length === 0}
+              >
+                <Text style={styles.confirmButtonText}>Import Records</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </ScrollView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -315,6 +621,18 @@ const createStyles = (isDarkMode: boolean) =>
       lineHeight: 30,
     },
     headerCopy: { flex: 1 },
+    importHeaderButton: {
+      backgroundColor: "#2563eb",
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10,
+      alignSelf: "center",
+    },
+    importHeaderButtonText: {
+      color: "#ffffff",
+      fontSize: 12,
+      fontWeight: "700",
+    },
     eyebrow: {
       color: "#2563eb",
       fontSize: 10,
@@ -431,20 +749,92 @@ const createStyles = (isDarkMode: boolean) =>
       textAlign: "center",
       marginTop: 5,
     },
-    documentNote: {
-      flexDirection: "row",
-      backgroundColor: isDarkMode ? "#172554" : "#eff6ff",
-      borderRadius: 14,
-      padding: 14,
-      marginTop: 20,
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: "rgba(0, 0, 0, 0.6)",
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 20,
     },
-    documentIcon: { color: "#2563eb", fontSize: 22, marginRight: 12 },
-    documentCopy: { flex: 1 },
-    documentTitle: { color: "#1d4ed8", fontSize: 13, fontWeight: "800" },
-    documentText: {
-      color: isDarkMode ? "#cbd5e1" : "#475569",
+    modalContent: {
+      backgroundColor: isDarkMode ? "#1e293b" : "#ffffff",
+      borderRadius: 18,
+      padding: 22,
+      width: "100%",
+      maxWidth: 400,
+      borderWidth: 1,
+      borderColor: isDarkMode ? "#334155" : "#e2e8f0",
+    },
+    modalTitle: {
+      color: isDarkMode ? "#f8fafc" : "#0f172a",
+      fontSize: 18,
+      fontWeight: "800",
+      marginBottom: 6,
+    },
+    modalSubtitle: {
+      color: isDarkMode ? "#94a3b8" : "#64748b",
       fontSize: 12,
+      marginBottom: 18,
       lineHeight: 18,
-      marginTop: 3,
+    },
+    filePickerBox: {
+      borderWidth: 2,
+      borderColor: isDarkMode ? "#334155" : "#cbd5e1",
+      borderStyle: "dashed",
+      borderRadius: 12,
+      padding: 24,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: isDarkMode ? "#0f172a" : "#f8fafc",
+      marginBottom: 16,
+    },
+    filePickerIcon: { fontSize: 28, marginBottom: 8 },
+    filePickerText: {
+      color: isDarkMode ? "#94a3b8" : "#64748b",
+      fontSize: 12,
+      fontWeight: "600",
+      textAlign: "center",
+    },
+    previewContainer: {
+      marginBottom: 16,
+      padding: 10,
+      backgroundColor: isDarkMode ? "#0f172a" : "#eff6ff",
+      borderRadius: 8,
+    },
+    previewTitle: {
+      color: isDarkMode ? "#4ade80" : "#1d4ed8",
+      fontSize: 12,
+      fontWeight: "700",
+      textAlign: "center",
+    },
+    modalActions: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      gap: 10,
+    },
+    modalButton: {
+      flex: 1,
+      paddingVertical: 12,
+      borderRadius: 10,
+      alignItems: "center",
+    },
+    cancelButton: {
+      backgroundColor: isDarkMode ? "#334155" : "#e2e8f0",
+    },
+    cancelButtonText: {
+      color: isDarkMode ? "#f8fafc" : "#334155",
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    confirmButton: {
+      backgroundColor: "#2563eb",
+    },
+    confirmButtonText: {
+      color: "#ffffff",
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    disabledButton: {
+      opacity: 0.5,
     },
   });

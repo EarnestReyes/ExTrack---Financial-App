@@ -64,18 +64,24 @@ export default function LoginScreen() {
     try {
       await signInWithEmailAndPassword(auth, cleanEmail, password);
       router.replace('/(tabs)/home');
+      console.log('Navigating to Dashboard');
+
     } catch (error: any) {
       switch (error.code) {
         case 'auth/invalid-credential':
         case 'auth/user-not-found':
         case 'auth/wrong-password':
           alert('Invalid email or password.');
+          console.log('Invalid email or password.');
           break;
         case 'auth/invalid-email':
           alert('Please enter a valid email address.');
+          console.log(`Please Enter a valid email address`);
           break;
         default:
           alert(`Login failed: ${error.message}`);
+          console.log(`Login Failed: ${error.message}`);
+
           break;
       }
     } finally {
@@ -105,22 +111,28 @@ export default function LoginScreen() {
         handleLogin();
       } else if (success) {
         Alert.alert("Biometrics Verified", "Please enter your email and password to complete authentication.");
+        console.log("Biometrics Verified", "Please enter your email and password to complete authentication.");
       }
     }
   };
 
   const handleRegister = () => {
     router.push('/register');
+    console.log('Navigating to Register page');
+
   };
 
   const handleForgotPassword = () => {
     router.push('/forgotPass');
+    console.log('Navigating to Forgot Password age');
+
   };
 
   return (
     <KeyboardAvoidingView
       style={styles.keyboardContainer}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -216,28 +228,28 @@ const createStyles = (isDarkMode: boolean) => {
 
   return StyleSheet.create({
     keyboardContainer: { flex: 1, backgroundColor },
-    scrollContent: { flexGrow: 1 },
+    scrollContent: { flexGrow: 1, justifyContent: 'center' },
     container: {
       flex: 1,
       backgroundColor,
       paddingHorizontal: 25,
-      paddingTop: 60,
-      paddingBottom: 50,
+      paddingTop: 40,
+      paddingBottom: 40,
       justifyContent: 'center',
     },
-    logoSection: { alignItems: 'center', marginBottom: 35 },
+    logoSection: { alignItems: 'center', marginBottom: 25 },
     logoCircle: {
-      width: 75,
-      height: 75,
-      borderRadius: 38,
+      width: 65,
+      height: 65,
+      borderRadius: 33,
       backgroundColor: '#1e3a8a',
       justifyContent: 'center',
       alignItems: 'center',
-      marginBottom: 15,
+      marginBottom: 10,
     },
-    logoText: { color: 'white', fontSize: 40, fontWeight: 'bold' },
-    title: { fontSize: 32, fontWeight: 'bold', color: textColor },
-    subtitle: { fontSize: 16, color: secondaryTextColor, marginTop: 4, textAlign: 'center' },
+    logoText: { color: 'white', fontSize: 34, fontWeight: 'bold' },
+    title: { fontSize: 28, fontWeight: 'bold', color: textColor },
+    subtitle: { fontSize: 14, color: secondaryTextColor, marginTop: 2, textAlign: 'center' },
     loginCard: { 
       backgroundColor: cardColor, 
       borderRadius: 18, 
@@ -254,7 +266,7 @@ const createStyles = (isDarkMode: boolean) => {
       borderWidth: 1,
       borderColor,
       paddingHorizontal: 16,
-      paddingVertical: 16,
+      paddingVertical: 14,
       fontSize: 16,
       color: textColor,
     },
@@ -262,10 +274,10 @@ const createStyles = (isDarkMode: boolean) => {
     forgotText: { fontSize: 14, fontWeight: '600', color: '#3b82f6' },
     loginButton: {
       backgroundColor: '#1e3a8a',
-      padding: 18,
+      padding: 16,
       borderRadius: 15,
       alignItems: 'center',
-      marginTop: 25,
+      marginTop: 20,
     },
     biometricButton: {
       backgroundColor: isDarkMode ? '#334155' : '#e2e8f0',
@@ -279,7 +291,7 @@ const createStyles = (isDarkMode: boolean) => {
     biometricButtonText: { color: textColor, fontSize: 15, fontWeight: '600' },
     loginButtonDisabled: { opacity: 0.6 },
     loginButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-    registerContainer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 22 },
+    registerContainer: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20 },
     registerText: { fontSize: 14, color: secondaryTextColor, marginRight: 5 },
     registerLink: { fontSize: 14, fontWeight: 'bold', color: '#3b82f6' },
   });

@@ -146,6 +146,7 @@ export default function HomeScreen() {
 
     if (currentUser) {
       processAutomaticLoanPayments();
+      console.log(`Loan Automatic Deduction Reading`);
     }
   }, [currentUser]);
   
@@ -163,6 +164,7 @@ export default function HomeScreen() {
       const localPic = getUserProfilePicture();
       if (localPic) {
         setProfilePic(localPic);
+        console.log(`Profile picture is now set`);
       }
 
       // Load loans on focus
@@ -182,6 +184,7 @@ export default function HomeScreen() {
       const localPic = getUserProfilePicture();
       if (localPic) {
         setProfilePic(localPic);
+        
       }
 
       loadTransactions();
@@ -232,6 +235,7 @@ export default function HomeScreen() {
     const checkAllLoaded = () => {
       if (loadedProfiles && loadedTransactions && loadedLoans && loadedCards) {
         setIsDataLoading(false);
+        console.log(`Data is now loading`);
       }
     };
 
@@ -253,6 +257,7 @@ export default function HomeScreen() {
           }
         }
         loadedProfiles = true;
+        console.log(`Profile picture is now set`);
         checkAllLoaded();
       },
       (error) => {
@@ -377,6 +382,7 @@ export default function HomeScreen() {
     const dbData = fetchTransactionsFromDB();
     if (dbData && dbData.length > 0) {
       setTransactions(dbData);
+      console.log(`Fetching Transactions`);
     }
   };
 
@@ -384,6 +390,7 @@ export default function HomeScreen() {
     const dbData = fetchLoansFromDB();
     if (dbData && dbData.length > 0) {
       setLoans(dbData);
+      console.log(`Fetching Loans`);
     }
   };
 
@@ -503,6 +510,7 @@ export default function HomeScreen() {
     setName("");
     setAmount("");
     setCategory("");
+    console.log(`Close Transaction Form`);
   };
 
   // Combine standard transactions and cards formatted as transactions safely without duplication
@@ -542,6 +550,7 @@ export default function HomeScreen() {
   );
 
   const availableBalance = Number((totalIncome - totalExpenses).toFixed(2));
+  console.log(`Available Balance ${availableBalance}`);
 
   // FIXED: Strictly guard negative balance email dispatch to prevent false triggers when balance >= 0 OR while data is fetching
   useEffect(() => {
