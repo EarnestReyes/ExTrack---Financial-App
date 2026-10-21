@@ -9,8 +9,9 @@ export const createStyles = (isDarkMode: boolean) => {
     return StyleSheet.create({
         container: { flex: 1, backgroundColor },
         centerContent: { justifyContent: "center", alignItems: "center" },
-        scrollContent: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 140, width: "100%", maxWidth: 720, alignSelf: "center", },
-        profileHeader: { alignItems: "center", marginBottom: 28 },
+        scrollContent: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 140, width: "100%", maxWidth: 720, alignSelf: "center", },
+        profileHeader: { alignItems: "center", marginBottom: 24, paddingVertical: 8 },
+        editProfileAction: { minHeight: 44, paddingHorizontal: 18, justifyContent: 'center', alignItems: 'center', marginTop: 4 },
         avatarContainer: { position: "relative", marginBottom: 10 },
         avatar: {
             width: 88,
@@ -51,8 +52,8 @@ export const createStyles = (isDarkMode: boolean) => {
             borderColor: backgroundColor,
         },
         editAvatarText: { color: palette.white, fontSize: 12 },
-        userName: { fontSize: 20, fontWeight: "700", color: textColor },
-        userEmail: { fontSize: 13, color: secondaryTextColor, marginTop: 2 },
+        userName: { fontSize: 26, lineHeight: 34, letterSpacing: -0.7, fontWeight: "700", color: textColor, textAlign: 'center' },
+        userEmail: { fontSize: 13, lineHeight: 21, color: secondaryTextColor, marginTop: 4, textAlign: 'center' },
         userPhone: { fontSize: 13, color: secondaryTextColor, marginTop: 2 },
         tierBadge: {
             marginTop: 8,
@@ -184,9 +185,9 @@ export const createStyles = (isDarkMode: boolean) => {
             marginTop: 3,
         },
         analyticsCloseButton: {
-            width: 34,
-            height: 34,
-            borderRadius: 17,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
             backgroundColor: cardColor,
             alignItems: "center",
             justifyContent: "center",

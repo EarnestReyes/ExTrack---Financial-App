@@ -1,9 +1,9 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
 import { palette, themes } from "../../../constants/design";
 import { useReducedMotion } from "../../../hooks/use-reduced-motion";
 import React, { useCallback, useMemo, useState } from 'react';
 import {
 Image,
-Modal,
 Platform,
 ScrollView,
 StyleSheet,
@@ -12,7 +12,6 @@ TouchableOpacity,
 useColorScheme,
 View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getThemePreference } from '../../../database';
 
 // 1. Import your local image here (adjust the path based on your folder structure)
@@ -61,11 +60,10 @@ export const DeveloperModal: React.FC<DeveloperModalProps> = ({
     }
   }, [systemColorScheme]);
 
-  const insets = useSafeAreaInsets();
 
   const styles = useMemo(
-    () => createStyles(isDarkMode, insets.bottom),
-    [isDarkMode, insets.bottom]
+    () => createStyles(isDarkMode, 0),
+    [isDarkMode]
   );
 
   // 2. Resolve the local image source safely so it works across platforms

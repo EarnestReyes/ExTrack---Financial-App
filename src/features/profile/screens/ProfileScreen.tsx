@@ -1,3 +1,6 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
+import { Entrance } from "../../../components/ui/entrance";
+import { SettingsRow, SettingsSection } from "../components/ProfileSettings";
 import { getDesignTheme } from "../../../constants/design";
 import { refreshDesignTheme } from "../../../hooks/use-design-theme";
 import { useReducedMotion } from "../../../hooks/use-reduced-motion";
@@ -11,7 +14,7 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import * as ImagePicker from "expo-image-picker";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useFocusEffect, useRouter } from "expo-router";
-import { cacheUserProfile, clearCardsFromDB, deleteCardFromDB, fetchCardsFromDB, fetchLoansFromDB, insertCardToDB, insertLoanToDB, subscribeFinancialData, syncFromFirestore, updateCardInDB } from "../../../database";
+import { getSyncState, cacheUserProfile, clearCardsFromDB, deleteCardFromDB, fetchCardsFromDB, fetchLoansFromDB, insertCardToDB, insertLoanToDB, subscribeFinancialData, syncFromFirestore, updateCardInDB } from "../../../database";
 import { inputDate, moneyToCentavos, periodStart, scheduleDates, summarize } from "../../../domain/finance";
 import { calculateCreditScoreFromDB, ComputedCreditData } from "../../credit-score/services/creditScore";
 import { createModalStyles, createStyles } from "../styles/ProfileScreen.styles";
@@ -29,7 +32,6 @@ Alert,
 Image,
 Keyboard,
 KeyboardAvoidingView,
-Modal,
 Platform,
 ScrollView,
 Switch,
@@ -100,6 +102,14 @@ export default function ProfileScreen() {
   const appearance = getDesignTheme(isDarkMode);
   const [loading, setLoading] = useState(true);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const imageBusy = useRef(false);
+  const [appearanceMode, setAppearanceMode] = useState("system");
+  const [showCardDetails, setShowCardDetails] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(getSyncState());
+  const [syncVerified, setSyncVerified] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const syncBusyRef = useRef(false);
 
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -152,6 +162,8 @@ export default function ProfileScreen() {
     isNotificationEnabled: true,
   });
 
+  useEffect(() => { setPhotoFailed(false); }, [profile.photoURL]);
+
   const [editForm, setEditForm] = useState({
     displayName: "",
     phone: "",
@@ -174,6 +186,7 @@ export default function ProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       const savedTheme = getThemePreference();
+      setAppearanceMode(savedTheme || "system");
       void loadCreditScore().catch(() => {});
       if (savedTheme !== null) {
         setIsDarkMode(savedTheme === "dark");
@@ -183,49 +196,58 @@ export default function ProfileScreen() {
     }, [systemColorScheme])
   );
 
-  const handleDarkModeToggle = (value: boolean) => {
-    setIsDarkMode(value);
-    setThemePreference(value ? "dark" : "light");
-    refreshDesignTheme();
-  };
-
-  const handlePickImage = async () => {
-    if (!currentUser) return;
-
-    const permissionResult =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) {
-      Alert.alert(
-        "Permission Denied",
-        "Permission to access gallery is required!"
-      );
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.2, // Keep Base64 within Firestore 1MB document limit
-      base64: true,
-    });
-
-    if (!result.canceled && result.assets[0]?.base64) {
-      setIsUploadingImage(true);
+  const chooseAppearance = () => Alert.alert("Appearance", "Choose how ExTrack looks on this device.", [
+    ...(["Light", "Dark", "System"] as const).map(label => ({ text: label, onPress: () => {
       try {
-        const imageUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
-        const userDocRef = doc(db, "users", currentUser.uid);
+        // Existing preference reader treats an empty value as system/default.
+        setThemePreference(label === "System" ? "" : label.toLowerCase());
+        setAppearanceMode(label.toLowerCase());
+        setIsDarkMode(label === "System" ? systemColorScheme === "dark" : label === "Dark");
+        refreshDesignTheme();
+      } catch { Alert.alert("Could not save appearance", "Please try again."); }
+    } })), { text: "Cancel", style: "cancel" },
+  ]);
 
-        await updateDoc(userDocRef, { photoURL: imageUri });
-        setProfile((prev) => ({ ...prev, photoURL: imageUri }));
-        Alert.alert("Success", "Profile picture updated successfully!");
-      } catch (error) {
-
-        Alert.alert("Error", "Failed to update profile picture.");
-      } finally {
-        setIsUploadingImage(false);
-      }
-    }
+  const savePhoto = async (photoURL: string, uid: string) => {
+    if (auth.currentUser?.uid !== uid) return;
+    await updateDoc(doc(db, "users", uid), { photoURL });
+    if (auth.currentUser?.uid === uid) setProfile(previous => ({ ...previous, photoURL }));
+  };
+  const handlePickImage = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || imageBusy.current) return;
+    imageBusy.current = true; setIsUploadingImage(true);
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) { Alert.alert("Photo access needed", "Allow photo access in device settings to choose a profile picture."); return; }
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.2, base64: true });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset?.base64 || asset.base64.length > 500000) { Alert.alert("Choose a smaller photo", "This image is too large for the existing profile storage. Try a smaller cropped photo."); return; }
+      const mime = asset.mimeType ?? "image/jpeg";
+      if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) { Alert.alert("Unsupported photo", "Choose a JPEG, PNG or WebP image."); return; }
+      await savePhoto('data:' + mime + ';base64,' + asset.base64, uid);
+    } catch { if (auth.currentUser?.uid === uid) Alert.alert("Photo not updated", "Check your connection and try again."); }
+    finally { imageBusy.current = false; if (auth.currentUser?.uid === uid) setIsUploadingImage(false); }
+  };
+  const managePhoto = () => Alert.alert("Profile photo", "Photos use your existing account profile storage.", [
+    { text: profile.photoURL ? "Replace photo" : "Choose photo", onPress: () => { void handlePickImage(); } },
+    ...(profile.photoURL ? [{ text: "Remove photo", style: "destructive" as const, onPress: async () => {
+      const uid = auth.currentUser?.uid;
+      if (!uid || imageBusy.current) return;
+      imageBusy.current = true; setIsUploadingImage(true);
+      try { await savePhoto("", uid); }
+      catch { if (auth.currentUser?.uid === uid) Alert.alert("Photo not removed", "Check your connection and try again."); }
+      finally { imageBusy.current = false; if (auth.currentUser?.uid === uid) setIsUploadingImage(false); }
+    } }] : []), { text: "Cancel", style: "cancel" },
+  ]);
+  const retrySync = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || syncBusyRef.current) return;
+    syncBusyRef.current = true; setSyncBusy(true); setSyncVerified(false);
+    try { await syncFromFirestore(); if (auth.currentUser?.uid === uid) setSyncVerified(getSyncState() === "idle"); }
+    catch { if (auth.currentUser?.uid === uid) Alert.alert("Sync unavailable", "Local records and pending changes are preserved. Reconnect and try again."); }
+    finally { syncBusyRef.current = false; if (auth.currentUser?.uid === uid) { setSyncBusy(false); setSyncStatus(getSyncState()); } }
   };
 
   const handlePhoneChange = (text: string) => {
@@ -310,12 +332,14 @@ export default function ProfileScreen() {
   );
 
   const reload = () => {
+    if (auth.currentUser?.uid !== currentUser.uid) return;
+    setSyncStatus(getSyncState()); setSyncVerified(false);
     setLoans(fetchLoansFromDB().map((loan) => ({ ...loan, id: loan.firestoreId!, monthlyDeduction: loan.monthlyPayment, remainingMonths: 0 })));
     setCards(fetchCardsFromDB().map((card) => ({ ...card, id: card.firestoreId! })));
   };
   reload();
   const stop = subscribeFinancialData(reload);
-  void syncFromFirestore().catch(() => {});
+  void syncFromFirestore().then(() => { if (auth.currentUser?.uid === currentUser.uid) { setSyncVerified(getSyncState() === "idle"); setSyncStatus(getSyncState()); } }).catch(() => { if (auth.currentUser?.uid === currentUser.uid) setSyncStatus(getSyncState()); });
   return () => { unsubscribeUser(); stop(); };
 }, [currentUser?.uid]);
 
@@ -697,11 +721,12 @@ const openInformation = () => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        <View style={styles.profileHeader}>
+        <Entrance><View style={styles.profileHeader}>
           <View style={styles.avatarContainer}>
-            {profile.photoURL ? (
+            {profile.photoURL && !photoFailed ? (
               <Image
                 source={{ uri: profile.photoURL }}
+                accessibilityLabel="Your profile photo" onError={() => setPhotoFailed(true)}
                 style={styles.avatarImage}
               />
             ) : (
@@ -715,7 +740,7 @@ const openInformation = () => {
             <TouchableOpacity
               accessibilityRole="button" accessibilityLabel="Change profile photo" hitSlop={12}
               style={styles.editAvatarBadge}
-              onPress={handlePickImage}
+              onPress={managePhoto}
               disabled={isUploadingImage}
             >
               {isUploadingImage ? (
@@ -728,52 +753,17 @@ const openInformation = () => {
 
           <Text style={styles.userName}>{profile.displayName}</Text>
           <Text style={styles.userEmail}>{profile.email}</Text>
-          {profile.phone ? (
-            <Text style={styles.userPhone}>
-              +63 {profile.phone.replace(/^0/, "")}
-            </Text>
-          ) : null}
+          <TouchableOpacity accessibilityRole="button" onPress={openEditModal} style={styles.editProfileAction}><Text style={{ color: appearance.accent, fontWeight: "600", fontSize: 13 }}>Edit profile</Text></TouchableOpacity>
+        </View></Entrance>
 
-          <View style={styles.tierBadge}>
-            <Text style={styles.tierBadgeText}>{profile.tier}</Text>
-          </View>
-        </View>
-
-        <View style={styles.quickActionsContainer}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => handleOpenCreditScore()}
-          >
-            <View style={[styles.actionIconContainer, { backgroundColor: appearance.raised }]}>
-              <Ionicons name="shield-checkmark-outline" size={21} color={appearance.accent} />
-            </View>
-            <Text style={styles.actionLabel}>Wellness</Text>
-          </TouchableOpacity>
-
-               <CreditScoreModal visible={creditScoreVisible} onClose={() =>
+<CreditScoreModal visible={creditScoreVisible} onClose={() =>
                 setCreditScoreVisible(false)}
                 creditScore={creditData.score}
                 paymentHistoryCount={creditData.paymentHistoryCount}
                 activeLoansCount={creditData.activeLoansCount}
                 creditUtilizationPct={creditData.creditUtilizationPct}
                 />
-
-                <TouchableOpacity
-        style={styles.actionButton}
-        onPress={() => handleAction("Loan")}
-      >
-        <View
-          style={[
-            styles.actionIconContainer,
-            { backgroundColor: appearance.raised },
-          ]}
-        >
-          <Ionicons name="calendar-outline" size={20} color={appearance.accent} />
-        </View>
-        <Text style={styles.actionLabel}>Loan</Text>
-      </TouchableOpacity>
-
-          <Modal
+<Modal
             visible={isLoanModalVisible}
             animationType={reducedMotion ? "none" : "slide"}
             transparent={true}
@@ -917,36 +907,18 @@ const openInformation = () => {
               </KeyboardAvoidingView>
             </View>
           </Modal>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => handleAction("Manage Cards")}
-          >
-            <View
-              style={[
-                styles.actionIconContainer,
-                { backgroundColor: appearance.raised },
-              ]}
-            >
-              <Ionicons name="card-outline" size={21} color={appearance.accent} />
-            </View>
-            <Text style={styles.actionLabel}>Cards</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.actionButton} onPress={openAnalytics}>
-            <View
-              style={[
-                styles.actionIconContainer,
-                { backgroundColor: appearance.raised },
-              ]}
-            >
-              <Ionicons name="stats-chart-outline" size={21} color={appearance.accent} />
-            </View>
-            <Text style={styles.actionLabel}>Analytics</Text>
-          </TouchableOpacity>
-        </View>
-
-<View style={styles.sectionContainer}>
+        <SettingsSection title="My account" dark={isDarkMode}>
+          <SettingsRow title="Personal information" subtitle="Edit your name and account details" icon="person-outline" dark={isDarkMode} onPress={openEditModal} last />
+        </SettingsSection>
+        <SettingsSection title="Financial management" dark={isDarkMode}>
+          <SettingsRow title="My cards" subtitle={cards.length + " saved card summaries"} icon="card-outline" dark={isDarkMode} onPress={() => setShowCardDetails(value => !value)} />
+          <SettingsRow title="Add a card" icon="add-circle-outline" dark={isDarkMode} onPress={() => handleAction("Manage Cards")} />
+          <SettingsRow title="Loans" subtitle="View schedules or record a new loan" icon="calendar-outline" dark={isDarkMode} onPress={() => Alert.alert("Loans", "Choose an action. Payments always require explicit confirmation.", [{ text: "View schedules", onPress: () => router.push("/activity") }, { text: "Add loan", onPress: () => handleAction("Loan") }, { text: "Cancel", style: "cancel" }])} />
+          <SettingsRow title="Statements" icon="document-text-outline" dark={isDarkMode} onPress={() => handleAction("Bank Documents")} />
+          <SettingsRow title="Financial wellness estimate" icon="shield-checkmark-outline" dark={isDarkMode} onPress={() => { void handleOpenCreditScore(); }} />
+          <SettingsRow title="Analytics" icon="stats-chart-outline" dark={isDarkMode} onPress={openAnalytics} last />
+        </SettingsSection>
+        {showCardDetails && <><View style={styles.sectionContainer}>
   <View style={styles.sectionHeader}>
     <Text style={styles.sectionTitle}>Accounts & Cards</Text>
     <TouchableOpacity onPress={handleClearCards}>
@@ -1001,143 +973,30 @@ const openInformation = () => {
   )}
 </View>
 
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Preferences & Security</Text>
-          <View style={styles.settingCard}>
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingTitle}>Face ID / Biometrics</Text>
-                <Text style={styles.settingSubtitle}>Secure app access</Text>
-              </View>
-              <Switch
-                value={profile.isBiometricEnabled}
-                onValueChange={handleBiometricToggle}
-                trackColor={{ false: "#767577", true: "#1e3a8a" }}
-              />
-            </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingTitle}>Push Notifications</Text>
-                <Text style={styles.settingSubtitle}>
-                  Alerts for balance changes
-                </Text>
-              </View>
-              <Switch
-                value={profile.isNotificationEnabled}
-                onValueChange={(val) => handleTogglePreference("isNotificationEnabled", val)}
-                trackColor={{ false: "#767577", true: "#1e3a8a" }}
-              />
-            </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.settingRow}>
-              <View style={styles.settingInfo}>
-                <Text style={styles.settingTitle}>Dark Theme</Text>
-                <Text style={styles.settingSubtitle}>
-                  Toggle app appearance
-                </Text>
-              </View>
-              <Switch
-                value={isDarkMode}
-                onValueChange={handleDarkModeToggle}
-                trackColor={{ false: "#767577", true: "#1e3a8a" }}
-              />
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Account Details</Text>
-          <View style={styles.settingCard}>
-
-            <TouchableOpacity style={styles.menuRow} onPress={openEditModal}>
-              <Text style={styles.menuText}>Personal Information</Text>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-
-            <TouchableOpacity
-              style={styles.menuRow}
-              onPress={() => handleAction("Bank Documents")}
-            >
-              <Text style={styles.menuText}>Statements & Documents</Text>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-
-            <TouchableOpacity
-              style={styles.menuRow}
-              onPress={() => handleAction("Help & Support")}
-            >
-              <Text style={styles.menuText}>Help & Support</Text>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Security & Privacy</Text>
-          <View style={styles.settingCard}>
-
-            <TouchableOpacity style={styles.menuRow} onPress={openChangePassword}>
-              <Text style={styles.menuText}>Change Password</Text>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
-            <View style={styles.divider} />
-          </View>
-        </View>
-
-      <View style={styles.sectionContainer}>
-        <Text style={styles.sectionTitle}>Developer Details</Text>
-        <View style={styles.settingCard}>
-
-          <TouchableOpacity style={styles.menuRow} onPress={openDeveloper}>
-            <Text style={styles.menuText}>Developer</Text>
-            <Text style={styles.menuArrow}>›</Text>
-          </TouchableOpacity>
-
-          <View style={styles.divider} />
-
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={openInformation}
-          >
-            <Text style={styles.menuText}>System Information</Text>
-            <Text style={styles.menuArrow}>›</Text>
-          </TouchableOpacity>
-
-        </View>
-      </View>
-
-      <SystemInformationModal
-        visible={information}
-        onClose={() => setInformation(false)}
-      />
-
-      <DeveloperModal
-        visible={developer}
-        onClose={() => setDeveloper(false)}
-      />
-
-      <ChangePasswordModal
-        visible={password}
-        onClose={() => setPassword(false)}
-      />
-
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Text style={styles.logoutButtonText}>Log Out</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.clearButton} disabled accessibilityState={{ disabled: true }} accessibilityHint="No safe disposable cache is available">
-          <Text style={styles.clearButtonText}>Clear Cache</Text>
-        </TouchableOpacity>
-        <Text style={styles.settingSubtitle}>Unavailable: no disposable cache was identified. Financial records and pending changes are kept.</Text>
+</>}
+        <SettingsSection title="Preferences" dark={isDarkMode}>
+          <SettingsRow title="Appearance" subtitle={appearanceMode === "system" ? "Follow device appearance" : appearanceMode === "dark" ? "Dark" : "Light"} icon="contrast-outline" dark={isDarkMode} onPress={chooseAppearance} />
+          <SettingsRow title="Email balance alerts" subtitle="Recorded negative balance notifications" icon="notifications-outline" dark={isDarkMode} last accessory={<Switch accessibilityLabel="Email balance alerts" value={profile.isNotificationEnabled} onValueChange={value => handleTogglePreference("isNotificationEnabled", value)} trackColor={{ false: appearance.border, true: appearance.primary }} />} />
+        </SettingsSection>
+        <SettingsSection title="Security & privacy" dark={isDarkMode}>
+          <SettingsRow title="Biometric app lock" subtitle="Device authentication when returning to ExTrack" icon="finger-print-outline" dark={isDarkMode} accessory={<Switch accessibilityLabel="Biometric app lock" value={profile.isBiometricEnabled} onValueChange={handleBiometricToggle} trackColor={{ false: appearance.border, true: appearance.primary }} />} />
+          <SettingsRow title="Change password" subtitle="Send a secure password reset email" icon="key-outline" dark={isDarkMode} onPress={openChangePassword} />
+          <SettingsRow title="Data management" subtitle="Financial records and pending changes are protected" icon="folder-outline" dark={isDarkMode} onPress={() => Alert.alert("Your data", "Financial records remain in this account's local database and existing cloud sync. Clear Cache is unavailable because no disposable cache has been identified. Export and verified backup recovery are not yet available.")} last />
+        </SettingsSection>
+        <SettingsSection title="Synchronization" dark={isDarkMode}>
+          <SettingsRow title={syncBusy || syncStatus === "syncing" ? "Syncing financial records" : syncStatus === "error" ? "Sync error" : syncStatus === "pending" ? "Changes pending" : syncVerified ? "Synced" : "Check financial sync"} subtitle={syncStatus === "error" ? "Local changes are kept. Tap to retry." : syncVerified ? "Last requested financial sync completed." : "Tap to check using the existing sync service."} icon="sync-outline" dark={isDarkMode} onPress={() => { void retrySync(); }} disabled={syncBusy} accessory={syncBusy ? <ActivityIndicator color={appearance.accent} /> : undefined} last />
+        </SettingsSection>
+        <SettingsSection title="Support & about" dark={isDarkMode}>
+          <SettingsRow title="Help and support" icon="help-circle-outline" dark={isDarkMode} onPress={() => handleAction("Help & Support")} />
+          <SettingsRow title="About ExTrack" icon="information-circle-outline" dark={isDarkMode} onPress={() => Alert.alert("About ExTrack", "Track recorded income, expenses, cards and loan schedules. Financial summaries use your recorded ledger; ExTrack does not transfer money.", [{ text: "Developer", onPress: openDeveloper }, { text: "Done", style: "cancel" }])} />
+          <SettingsRow title="App version & system information" icon="phone-portrait-outline" dark={isDarkMode} onPress={openInformation} last />
+        </SettingsSection>
+        <SettingsSection title="Account" dark={isDarkMode}>
+          <SettingsRow title="Log out" icon="log-out-outline" dark={isDarkMode} onPress={handleLogout} last />
+        </SettingsSection>
+        <SystemInformationModal visible={information} onClose={() => setInformation(false)} />
+        <DeveloperModal visible={developer} onClose={() => setDeveloper(false)} />
+        <ChangePasswordModal visible={password} onClose={() => setPassword(false)} />
       </ScrollView>
 
       <Modal
@@ -1164,6 +1023,7 @@ const openInformation = () => {
               </TouchableOpacity>
             </View>
 
+            <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 8 }}>
             <View style={styles.analyticsPeriodContainer}>
               {(["Week", "Month", "Year"] as const).map((period) => (
                 <TouchableOpacity
@@ -1250,6 +1110,7 @@ const openInformation = () => {
                 No expense data for this period.
               </Text>
             )}
+          </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1426,9 +1287,12 @@ const openInformation = () => {
         visible={isEditModalVisible}
         animationType={reducedMotion ? "none" : "slide"}
         transparent={true}
+        avoidKeyboard
+        onRequestClose={() => { if (!isSaving) setIsEditModalVisible(false); }}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { maxHeight: "100%" }]}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
             <Text style={styles.modalTitle}>Edit Personal Information</Text>
 
             <Text style={styles.inputLabel}>Full Name</Text>
@@ -1495,6 +1359,7 @@ const openInformation = () => {
                 )}
               </TouchableOpacity>
             </View>
+          </ScrollView>
           </View>
         </View>
       </Modal>

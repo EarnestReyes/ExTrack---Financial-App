@@ -1,6 +1,6 @@
 # Premium fintech UI upgrade
 
-Current release scope: see [DEVELOPMENT_SCOPE.md](DEVELOPMENT_SCOPE.md). Chatbot work is postponed; its code/configuration is preserved, its Help entry has been removed, and its route is excluded from current navigation. Chat-related implementation notes below describe preserved work, not a feature shipping in this release.
+Current AI scope: see [AI_FREE_TIER.md](AI_FREE_TIER.md). Optional Gemini support and explanations are implemented behind activation gates; offline analytics remain deterministic. No live integration or billing was activated.
 
 ## Implemented
 

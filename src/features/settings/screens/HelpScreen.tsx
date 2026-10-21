@@ -1,3 +1,4 @@
+import { supportChatEnabled } from "../../../services/ai/supportService";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -85,6 +86,8 @@ export default function HelpScreen() {
             </Text>
           </View>
         </View>
+
+        {supportChatEnabled && <TouchableOpacity accessibilityRole="button" style={styles.contactButton} onPress={() => router.push("/ChatSupport")}><Text style={styles.contactButtonText}>Ask the ExTrack assistant</Text></TouchableOpacity>}
 
         <Text style={styles.sectionTitle}>Frequently asked questions</Text>
         <View style={styles.faqList}>

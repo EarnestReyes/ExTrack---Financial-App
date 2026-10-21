@@ -1,3 +1,4 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
 import { useReducedMotion } from "../../../hooks/use-reduced-motion";
 import { auth } from "@/services/firebase/client";
 import * as DocumentPicker from "expo-document-picker";
@@ -9,7 +10,6 @@ import { useCallback, useState } from "react";
 import {
 ActivityIndicator,
 Alert,
-Modal,
 ScrollView,
 Text,
 TouchableOpacity,
@@ -346,7 +346,8 @@ export default function StatementsScreen() {
         onRequestClose={() => setIsModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { maxHeight: "100%" }]}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
             <Text style={styles.modalTitle}>Import Statement File</Text>
             <Text style={styles.modalSubtitle}>
               Upload either a Maya PDF statement or a CSV spreadsheet export.
@@ -403,6 +404,7 @@ export default function StatementsScreen() {
                 <Text style={styles.confirmButtonText}>Import saving unavailable</Text>
               </TouchableOpacity>
             </View>
+          </ScrollView>
           </View>
         </View>
       </Modal>

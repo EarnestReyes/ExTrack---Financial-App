@@ -1,0 +1,22 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/schema.json",
+  "name": "extrack-ai-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-21",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "vars": {
+    "AI_ENABLED": "false",
+    "AI_FREE_TIER_VERIFIED": "false",
+    "GEMINI_MODEL": "gemini-2.5-flash-lite",
+    "FIREBASE_PROJECT_ID": "extrack-f16fe",
+    "FIREBASE_PROJECT_NUMBER": "943746056107",
+    "FIREBASE_APP_IDS": "1:943746056107:android:ee45e85606c247a6e1dcee,1:943746056107:ios:16363e08c2c63581e1dcee",
+    "ALLOWED_ORIGINS": ""
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "AI_QUOTA", "class_name": "AIQuota" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AIQuota"] }]
+}

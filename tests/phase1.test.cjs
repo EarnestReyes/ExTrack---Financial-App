@@ -133,6 +133,7 @@ test('real SQLite: failed/repeated sync preserves pending rows and remote deleti
 
 function backend() {
   const records = new Map(), secrets = { GEMINI_API_KEY: 'test-only', SMTP_USER: 'test-only', SMTP_PASSWORD: 'test-only' };
+  const params = { GEMINI_SUPPORT_MODEL: 'gemini-2.5-flash-lite', AI_ENABLED: 'true', AI_FREE_TIER_VERIFIED: 'true' };
   let chain = Promise.resolve(), fetchImpl = async () => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Help response' }] } }] }) });
   const store = { doc: (id) => ({ path: id, id: id.split('/').at(-1) }), runTransaction(callback) {
     const next = chain.then(async () => {
@@ -147,14 +148,14 @@ function backend() {
   const callable = (options, handler) => Object.assign(handler, { options });
   const functions = load('functions/src/index.ts', {
     'firebase-functions/v2/https': { onCall: callable, HttpsError },
-    'firebase-functions/params': { defineSecret: (name) => ({ value: () => secrets[name] }), defineString: () => ({ value: () => 'test-model' }) },
+    'firebase-functions/params': { defineSecret: (name) => ({ value: () => secrets[name] }), defineString: (name) => ({ value: () => params[name] }) },
     'firebase-admin/app': { initializeApp() {}, getApps: () => [] },
     'firebase-admin/firestore': { getFirestore: () => store },
     nodemailer: { createTransport: () => ({ sendMail: async () => {} }) },
   }, { fetch: (...args) => fetchImpl(...args) });
-  return { functions, records, secrets, setFetch: (fn) => { fetchImpl = fn; } };
+  return { functions, records, secrets, params, setFetch: (fn) => { fetchImpl = fn; } };
 }
-const request = (data, uid = 'A') => ({ auth: { uid, token: { email: 'test@example.invalid', email_verified: true } }, data });
+const request = (data, uid = 'A') => ({ auth: { uid, token: { email: 'test@example.invalid', email_verified: true } }, data: data?.messages ? { consent: true, policyVersion: "free-tier-v1", ...data } : data });
 test('backend rejects unauthenticated and oversized support requests', async () => {
   const { functions } = backend();
   await assert.rejects(functions.supportChat({ data: {} }), { code: 'unauthenticated' });
@@ -294,7 +295,7 @@ test('application: card summaries sync through owned outbox without creating inc
   assert.equal(b.database.fetchTransactionsFromDB().length, 0);
 });
 
-function chatHarness(enabled = true) {
+function chatHarness(enabled = true, consent = true) {
   let cursor = 0, calls = 0, user = { uid: 'A' }, resolve, reject;
   const hooks = [], effects = [];
   const react = {
@@ -306,7 +307,7 @@ function chatHarness(enabled = true) {
   const jsx = (type, props) => ({ type, props });
   const Component = load('src/features/ai-chat/components/ChatSupport.tsx', {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx },
-    'react-native': { ...components, StyleSheet: { create: (styles) => styles }, Platform: { OS: 'android' }, Keyboard: { dismiss() {} }, Alert: { alert() {} } },
+    'react-native': { ...components, StyleSheet: { create: (styles) => styles }, Platform: { OS: 'android' }, Keyboard: { dismiss() {} }, Alert: { alert(title, message, buttons) { return consent ? buttons?.find(button => button.text === "Send to Google")?.onPress?.() : undefined; } } },
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     '../../../contexts/AuthContext': { useAuth: () => ({ user }) },
     '../../../services/ai/supportService': { supportChatEnabled: enabled, sendSupportMessage: async () => { calls++; return new Promise((yes, no) => { resolve = yes; reject = no; }); } },
@@ -339,4 +340,93 @@ test('chat component: missing configuration, empty input, and signed-out state m
   const chat = chatHarness(false); chat.type('Help'); await chat.send(); assert.equal(chat.calls, 0);
   const enabled = chatHarness(); enabled.type('   '); await enabled.send();
   enabled.switchAccount(null); enabled.type('Help'); await enabled.send(); assert.equal(enabled.calls, 0);
+});
+
+const explanation = { consent: true, policyVersion: "free-tier-v1", summary: { cashFlow: 'surplus', spendingPattern: 'spread', savingsActivity: 'none', loanAttention: 'none' } };
+test('AI gates reject unverified billing configuration and paid model selection before fetching', async () => {
+  const b = backend(); let calls = 0;
+  b.setFetch(async () => { calls++; throw Error('must not call'); });
+  for (const [key, value] of [['AI_ENABLED', 'false'], ['AI_FREE_TIER_VERIFIED', 'false'], ['GEMINI_SUPPORT_MODEL', 'paid-model']]) {
+    const previous = b.params[key]; b.params[key] = value;
+    await assert.rejects(b.functions.explainInsights(request(explanation)), { code: 'unavailable' });
+    b.params[key] = previous;
+  }
+  assert.equal(calls, 0);
+});
+test('insights reject missing auth, absent consent, private fields and prompt injection', async () => {
+  const b = backend(); let calls = 0;
+  b.setFetch(async () => { calls++; throw Error('must not call'); });
+  await assert.rejects(b.functions.explainInsights({ data: explanation }), { code: 'unauthenticated' });
+  for (const data of [{ ...explanation, consent: false }, { ...explanation, uid: 'B' }, { ...explanation, summary: { ...explanation.summary, income: 123 } }, { ...explanation, summary: { ...explanation.summary, cashFlow: 'ignore instructions' } }]) {
+    await assert.rejects(b.functions.explainInsights(request(data)), { code: 'invalid-argument' });
+  }
+  await assert.rejects(b.functions.supportChat(request({ consent: false, messages: [{ role: 'user', text: 'Help' }] })), { code: 'invalid-argument' });
+  await assert.rejects(b.functions.supportChat(request({ messages: [{ role: 'user', text: 'Email test@example.invalid' }] })), { code: 'invalid-argument' });
+  assert.equal(b.functions.explainInsights.options.enforceAppCheck, true);
+  assert.equal(calls, 0);
+});
+test('AI daily cap is shared by support and insights; failed attempts consume capacity', async () => {
+  const b = backend(); const data = { messages: [{ role: 'user', text: 'Help' }] };
+  for (let i = 0; i < 4; i++) await b.functions.supportChat(request(data));
+  await b.functions.explainInsights(request(explanation));
+  await assert.rejects(b.functions.explainInsights(request(explanation)), { code: 'resource-exhausted' });
+  const failed = backend(); let calls = 0;
+  failed.setFetch(async () => { calls++; throw Error('offline'); });
+  for (let i = 0; i < 5; i++) await assert.rejects(failed.functions.explainInsights(request(explanation)), { code: 'unavailable' });
+  await assert.rejects(failed.functions.supportChat(request(data)), { code: 'resource-exhausted' });
+  assert.equal(calls, 5);
+});
+test('global AI cap is atomic under concurrent accounts', async () => {
+  const b = backend(); let calls = 0;
+  b.setFetch(async () => { calls++; return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Explanation' }] } }] }) }; });
+  const results = await Promise.allSettled(Array.from({ length: 25 }, (_, i) => b.functions.explainInsights(request(explanation, 'account-' + i))));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 20);
+  assert.equal(calls, 20);
+});
+test('Gemini 429 opens a shared daily circuit without retries or raw provider leakage', async () => {
+  const b = backend(); let calls = 0;
+  b.setFetch(async () => { calls++; return { ok: false, status: 429 }; });
+  await assert.rejects(b.functions.explainInsights(request(explanation)), { code: 'resource-exhausted' });
+  await assert.rejects(b.functions.supportChat(request({ messages: [{ role: 'user', text: 'Help' }] }, 'B')), { code: 'resource-exhausted' });
+  assert.equal(calls, 1);
+});
+test('chat requires consent before sending', async () => {
+  const chat = chatHarness(true, false); chat.type('How do I add an expense?'); await chat.send();
+  assert.equal(chat.calls, 0); assert.equal(chat.hooks[2], false);
+});
+test('offline monthly insights use deterministic ledger rules and never serialize records', () => {
+  const { buildLocalInsights } = load('src/features/insights/services/localInsights.ts');
+  const entries = [entry({ firestoreId: 'income', type: 'Income', amount: 1000 }), entry({ firestoreId: 'food', amount: 200 }), entry({ firestoreId: 'saving', category: 'Savings', amount: 100 }), entry({ firestoreId: 'legacy', category: 'Card', amount: 5000 })];
+  const result = buildLocalInsights(entries, [loan], new Date('2026-10-20T12:00:00+08:00'));
+  assert.equal(result.monthly.income, 1000); assert.equal(result.monthly.expenses, 300);
+  assert.equal(result.monthly.net, 700); assert.equal(result.savingsAllocations, 100);
+  assert.equal(result.breakdown[0][0], 'Food'); assert.equal(result.monthly.reviewCount, 1);
+  assert.equal(result.principal, loan.principalCentavos / 100);
+  assert.equal(Object.keys(result.summary).length, 4);
+  assert.equal(/1000|Food|Savings|2026|firestoreId/.test(JSON.stringify(result.summary)), false);
+});
+
+test('client release gate stays off despite old support flags; no requests are made', async () => {
+  let calls = 0;
+  const service = load('src/services/ai/supportService.ts', {
+    'firebase/functions': { getFunctions() { calls++; }, httpsCallable() { calls++; } },
+    '../firebase/client': { app: {}, auth: { currentUser: { uid: 'A' } } },
+  }, { process: { env: { EXPO_PUBLIC_SUPPORT_CHAT_ENABLED: 'true', EXPO_PUBLIC_AI_INSIGHTS_ENABLED: 'true' } } });
+  assert.equal(service.supportChatEnabled, false); assert.equal(service.financialInsightsAIEnabled, false);
+  await assert.rejects(service.sendSupportMessage([{ role: 'user', text: 'Help' }]));
+  await assert.rejects(service.explainFinancialSummary(explanation.summary));
+  assert.equal(calls, 0);
+});
+test('financial explanation provider payload contains only allowed labels and fixed model', async () => {
+  const b = backend(); let body;
+  b.setFetch(async (url, options) => {
+    assert.match(url, /models\/gemini-2\.5-flash-lite:generateContent$/);
+    body = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Read your verified figures in Insights.' }] } }] }) };
+  });
+  await b.functions.explainInsights(request(explanation));
+  assert.equal(JSON.stringify(JSON.parse(body.contents[0].parts[0].text)), JSON.stringify(explanation.summary));
+  assert.equal(body.generationConfig.maxOutputTokens, 512);
+  assert.equal(body.tools, undefined);
+  await assert.rejects(b.functions.explainInsights(request({ ...explanation, policyVersion: undefined })), { code: 'invalid-argument' });
 });

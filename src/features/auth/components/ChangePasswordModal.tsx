@@ -1,3 +1,4 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
 import { palette, themes } from "../../../constants/design";
 import { useReducedMotion } from "../../../hooks/use-reduced-motion";
 import { sendPasswordResetEmail } from 'firebase/auth';
@@ -6,7 +7,6 @@ import {
 ActivityIndicator,
 Alert,
 KeyboardAvoidingView,
-Modal,
 Platform,
 ScrollView,
 StyleSheet,
@@ -133,7 +133,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
     >
       <KeyboardAvoidingView
         style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <TouchableOpacity
           style={styles.backdropClickable}
@@ -290,9 +290,9 @@ const createStyles = (isDarkMode: boolean) => {
       marginTop: 2,
     },
     closeButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       backgroundColor: closeBtnBg,
       borderColor,
       borderWidth: 1,

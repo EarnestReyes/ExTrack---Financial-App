@@ -1,8 +1,8 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
 import { palette, themes } from "../../../constants/design";
 import { useReducedMotion } from "../../../hooks/use-reduced-motion";
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-Modal,
 Platform,
 ScrollView,
 StyleSheet,

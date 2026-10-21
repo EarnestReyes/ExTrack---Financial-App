@@ -1,6 +1,8 @@
 # ExTrack current development scope
 
-This scope supersedes earlier plans that included chatbot delivery or external AI integration in the current release.
+The latest request reopens opt-in Gemini support and explanations as a source-code implementation, targeting zero API spending. See [AI_FREE_TIER.md](AI_FREE_TIER.md) for cost/privacy boundaries and activation requirements. Live activation, billing changes and deployment remain outside this task.
+
+The earlier deferred-release scope below is historical; the latest AI request supersedes its blanket postponement. Financial calculations remain deterministic and offline-first.
 
 ## Current release priorities
 

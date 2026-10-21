@@ -191,5 +191,5 @@ individual form/chart components needs focused behavior tests. The pre-existing
 web Home-tab target/branding is deliberately unchanged in this refactor.
 # Current release scope
 
-See [DEVELOPMENT_SCOPE.md](DEVELOPMENT_SCOPE.md). AI integration is deferred. Help no longer imports or opens chat, and the preserved ChatSupport route is excluded by a false protected guard. Earlier chat-flow notes below describe preserved architecture for a future release.
+See [DEVELOPMENT_SCOPE.md](DEVELOPMENT_SCOPE.md). Optional Gemini support/explanations are now implemented behind client and server activation gates; see [AI_FREE_TIER.md](AI_FREE_TIER.md). Deterministic offline analytics are independent of AI. No live activation or deployment was performed.
 

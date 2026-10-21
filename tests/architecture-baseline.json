@@ -12,13 +12,13 @@
     "src/app/(tabs)/_layout.tsx"
   ],
   "unchanged": {
-    "app.json": "361f7fee2544795bf9f93b16b9796d8575c2d75efa6ab9ab44fe8c0144761577",
+    "app.json": "2dc5c116ce43fc3eea936bce425aca42210ee22b56a0cadba2daaf7fc7ac3122",
     "metro.config.js": "6b9f4f4d99d48cc97845cbc462c7a321bb52951c80874e23af469ab3917c8ac1",
     "firebase.json": "528e074c5600bf1cc8742eb54401b732bbdbc23e9cbd7bf6371600138392cea6",
     "firestore.rules": "371d244e39eb7577c78fc259710dc162c4d7d7a24aac9fe47f65e8d360d1e660",
     "src/domain/finance.ts": "35d1824ca39f8cffcc73aacd8d4ff9a0d00538c7db79ae01c30f0300952f682b",
-    "package.json": "4c9267cd9df32507ee4a8e7a095c21fbb514867537697145aaa735ca83be4608",
-    "package-lock.json": "315de34f38233af4e6289cb4a7a2d7d4d1a787618b4d6734095d978961aef89b"
+    "package.json": "6f667f77b8c0f97fe7b3b5ce0e589d0c3b7eb4d4e5a3ca207a3fa89b8e7308e8",
+    "package-lock.json": "f27ae554883d74e88470a9061db694e9db90c913c858432dec7671e1acb31a10"
   },
   "moves": {
     "src/app/index.tsx": "src/features/auth/screens/LoginScreen.tsx",
@@ -317,7 +317,7 @@
   "functionDeclarations": [
     {
       "name": "supportChat",
-      "hash": "496d35ad61d0d7b5848812dd9343e2473fcc3b0da5c9dc39a5ebc4728962c883"
+      "hash": "e63d9dd09cf16e09e65030eb5507048a3a96be24523b5bdfcc550b523d3a08ad"
     },
     {
       "name": "sendLowBalanceAlert",

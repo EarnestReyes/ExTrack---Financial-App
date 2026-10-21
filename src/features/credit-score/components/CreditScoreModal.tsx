@@ -1,18 +1,18 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
 import { palette, themes } from "../../../constants/design";
 import { useReducedMotion } from "../../../hooks/use-reduced-motion";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 Animated,
 Easing,
-Modal,
 Platform,
 StyleSheet,
+ScrollView,
 Text,
 TouchableOpacity,
 useColorScheme,
 View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, {
 Circle,
 G,
@@ -43,7 +43,6 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
 }) => {
   const systemColorScheme = useColorScheme();
   const reducedMotion = useReducedMotion();
-  const insets = useSafeAreaInsets();
 
   // Initialize state synchronously with local DB preference or system theme
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -188,8 +187,8 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
   });
 
   const styles = useMemo(
-    () => createStyles(isDarkMode, insets.bottom),
-    [isDarkMode, insets.bottom]
+    () => createStyles(isDarkMode, 0),
+    [isDarkMode]
   );
 
   const themeTokens = useMemo(
@@ -225,7 +224,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
           <View style={styles.dragHandle} />
 
           <View style={styles.analyticsHeader}>
-            <View>
+            <View style={{ flex: 1, marginRight: 12 }}>
               <Text style={styles.analyticsTitle}>Wellness Estimate</Text>
               <Text style={styles.analyticsSubtitle}>
                 App estimate only. Not a bureau credit score.
@@ -243,6 +242,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
           <View style={styles.gaugeContainer}>
             <Svg width={size} height={190} viewBox={`0 0 ${size} 190`}>
               {/* Arc background base track */}
@@ -425,6 +425,7 @@ export const CreditScoreModal: React.FC<CreditScoreModalProps> = ({
               <Text style={styles.cardValue}>{creditUtilizationPct}%</Text>
             </View>
           </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -453,6 +454,7 @@ const createStyles = (isDarkMode: boolean, bottomInset: number) => {
       ...StyleSheet.absoluteFill,
     },
     analyticsContent: {
+      maxHeight: '100%',
       backgroundColor: contentBg,
       borderTopLeftRadius: 32,
       borderTopRightRadius: 32,
@@ -492,9 +494,9 @@ const createStyles = (isDarkMode: boolean, bottomInset: number) => {
       color: textSecondary,
     },
     analyticsCloseButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: "center",
       justifyContent: "center",
       borderWidth: 1,

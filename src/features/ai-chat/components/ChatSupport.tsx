@@ -1,3 +1,4 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
 import { getDesignTheme } from "../../../constants/design";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -6,7 +7,6 @@ Alert,
 FlatList,
 Keyboard,
 KeyboardAvoidingView,
-Modal,
 Platform,
 StyleSheet,
 Text,
@@ -16,7 +16,7 @@ View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../../../contexts/AuthContext";
-import { sendSupportMessage, supportChatEnabled, SupportMessage } from "../../../services/ai/supportService";
+import { sendSupportMessage, supportChatEnabled, supportUsesWorker, SupportMessage } from "../../../services/ai/supportService";
 
 
 interface Message {
@@ -83,6 +83,15 @@ export default function ChatSupport({ visible, onClose, isDarkMode = true, reduc
     }
   };
 
+  const sendWithConsent = () => {
+    if (!inputMessage.trim() || busy.current || !user || !supportChatEnabled) return handleSendMessage();
+    const captured = generation.current;
+    return Alert.alert("Use Gemini for app support?", supportUsesWorker ? "Your message is sent to the ExTrack gateway, which selects a public help topic. Only that topic is sent to Google, not your conversation or financial records. Gemini free-tier input/output may be used for product improvement and human review. Do not type sensitive, confidential or personal information. Confirm only if you are 18+ and in an eligible region." : "Gemini free-tier prompts and responses may be used to improve Google's products, including human review. Your message and prior successful messages in this session will be shared. Do not include sensitive, confidential or personal information, amounts, passwords, account numbers or documents. Confirm only if you are 18+, in an eligible region and this conversation contains no private information.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Send to Google", onPress: () => { if (captured === generation.current) return handleSendMessage(); } },
+    ]);
+  };
+
   return (
     <Modal
       visible={visible}
@@ -94,7 +103,7 @@ export default function ChatSupport({ visible, onClose, isDarkMode = true, reduc
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.modalRoot}
       >
-        <SafeAreaView style={styles.modalContainer} edges={["top", "left", "right", "bottom"]}>
+        <SafeAreaView style={styles.modalContainer} edges={[]}>
           <View style={styles.modalHeader}>
             <View><Text style={styles.modalHeaderTitle}>ExTrack Assistant</Text><Text style={styles.headerCaption}>A little guidance. More clarity.</Text></View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -124,7 +133,7 @@ export default function ChatSupport({ visible, onClose, isDarkMode = true, reduc
             )}
           />
 
-          {!supportChatEnabled && <Text accessibilityLiveRegion="polite" style={styles.notice}>Chat is currently unavailable. You can still find answers in Help FAQs.</Text>}
+          {!supportChatEnabled && <Text accessibilityLiveRegion="polite" style={styles.notice}>AI is not activated. Use Help FAQs or the offline Insights summaries.</Text>}
           {loading && (
             <View style={styles.loadingBubble} accessibilityLiveRegion="polite">
               <ActivityIndicator size="small" color="#3b82f6" />
@@ -146,7 +155,7 @@ export default function ChatSupport({ visible, onClose, isDarkMode = true, reduc
             <TouchableOpacity
               accessibilityRole="button" accessibilityLabel="Send message"
               style={[styles.sendButton, (!inputMessage.trim() || loading || !supportChatEnabled || !user) && styles.sendButtonDisabled]}
-              onPress={handleSendMessage}
+              onPress={sendWithConsent}
               disabled={!inputMessage.trim() || loading || !supportChatEnabled || !user}
             >
               <Text style={styles.sendButtonText}>Send</Text>

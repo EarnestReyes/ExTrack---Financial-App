@@ -1,3 +1,5 @@
+import { SafeModal as Modal } from '../../../components/ui/safe-modal';
+import { LocalInsightsPanel } from "../../insights/components/LocalInsightsPanel";
 import { LoanCard } from "../components/LoanCard";
 import { TransactionRow } from "../../../components/ui/transaction-row";
 import { BalanceBackdrop } from "../../../components/ui/balance-backdrop";
@@ -20,7 +22,6 @@ FlatList,
 Image,
 KeyboardAvoidingView,
 Keyboard,
-Modal,
 Platform,
 RefreshControl,
 ScrollView,
@@ -31,7 +32,7 @@ useColorScheme,
 View
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { cacheUserProfile, confirmLoanInstallment, getSyncState, subscribeFinancialData, syncFromFirestore, watchFinancialData } from "../../../database";
 import { legacyStorageStatus } from "../../../database/legacyStorage";
 import { chartData, loanSchedule, localDate, mergeLedger, summarize } from "../../../domain/finance";
@@ -66,7 +67,6 @@ interface GraphDataItem {
 
 export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activity" | "insights" }) {
   const { width, fontScale } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
   const { compose } = useLocalSearchParams<{ compose?: string }>();
   const reducedMotion = useReducedMotion();
   const [search, setSearch] = useState("");
@@ -432,7 +432,8 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
   }) ?? [];
 
   // Keep long labels readable on small phones and with larger accessibility text.
-  const categoryColumns = width < 360 || fontScale >= 1.3 ? 1 : 2;
+  const categoryIcons: Record<string, keyof typeof Ionicons.glyphMap> = { Food: "restaurant-outline", Shopping: "bag-outline", Transportation: "car-outline", Bills: "receipt-outline", Entertainment: "play-circle-outline", Health: "medkit-outline", Education: "school-outline", Savings: "wallet-outline", Other: "grid-outline", Salary: "briefcase-outline", Allowance: "cash-outline", Freelance: "laptop-outline", Gift: "gift-outline" };
+  const categoryColumns = fontScale >= 1.6 ? 1 : fontScale >= 1.2 || width < 350 ? 2 : 3;
 
   const categories =
     type === "Expense"
@@ -598,6 +599,7 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
         </>}
         {mode === "home" && <TouchableOpacity accessibilityRole="button" style={styles.insightLink} onPress={() => router.navigate("/insights")}><Ionicons name="analytics-outline" size={22} color={colors.accent} /><View style={{ flex: 1 }}><Text style={styles.transactionName}>See the bigger picture</Text><Text style={styles.transactionCategory}>Explore income, spending and balance trends</Text></View><Ionicons name="arrow-forward" size={20} color={colors.accent} /></TouchableOpacity>}
         {mode === "insights" && <>
+        <LocalInsightsPanel key={currentUser?.uid} owner={currentUser?.uid} entries={transactions} loans={loans} dark={isDarkMode} />
         {combinedTransactions.length === 0 && <Text style={styles.emptyText}>Your story starts with a record. Add income or an expense to see your cash flow. Charts show recorded activity only.</Text>}
         {/* LINE CHART SECTION */}
         <View style={styles.sectionHeader}>
@@ -860,7 +862,7 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
           transparent={false}
           onRequestClose={() => setShowTransactionsModal(false)}
         >
-          <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.fullModalContainer}>
+          <SafeAreaView edges={[]} style={styles.fullModalContainer}>
             <View style={styles.fullModalHeader}>
               <Text style={styles.fullModalTitle}>All Transactions</Text>
               <TouchableOpacity
@@ -884,7 +886,7 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
           transparent={false}
           onRequestClose={() => setShowLoansModal(false)}
         >
-          <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.fullModalContainer}>
+          <SafeAreaView edges={[]} style={styles.fullModalContainer}>
             <View style={styles.fullModalHeader}>
               <Text style={styles.fullModalTitle}>All Active Loans</Text>
               <TouchableOpacity
@@ -984,14 +986,14 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
       <Modal visible={showForm} animationType={reducedMotion ? "none" : "slide"} transparent
         statusBarTranslucent onRequestClose={() => { if (!isSavingTransaction) closeTransactionForm(); }}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-          <View style={[styles.composerOverlay, { paddingTop: insets.top + 12, paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <View style={[styles.composerOverlay, { paddingTop: 12, paddingBottom: 12 }]}>
             <View style={styles.composerSheet} accessibilityViewIsModal>
               <View style={styles.composerHandle} />
               <View style={styles.composerHeader}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.composerEyebrow}>YOUR DAILY LEDGER</Text>
+                  <Text style={styles.composerEyebrow}>{editingTransactionId ? "EDIT TRANSACTION" : "NEW TRANSACTION"}</Text>
                   <Text accessibilityRole="header" style={styles.composerTitle}>{editingTransactionId ? "Edit transaction" : "Add transaction"}</Text>
-                  <Text style={styles.composerSubtitle}>A little record. A clearer picture.</Text>
+                  <Text style={styles.composerSubtitle}>Keep your finances in focus.</Text>
                 </View>
                 <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close transaction form"
                   disabled={isSavingTransaction} onPress={closeTransactionForm} style={styles.composerClose}>
@@ -1000,12 +1002,12 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
               </View>
               <ScrollView style={styles.composerScroll} contentContainerStyle={styles.composerBody}
                 showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-                <View style={styles.typeContainer}>
+                <View style={styles.composerSegment}>
                   {(["Expense", "Income"] as const).map(option => (
                     <TouchableOpacity key={option} accessibilityRole="button" accessibilityState={{ selected: type === option }}
-                      style={[styles.typeButton, type === option && (option === "Expense" ? styles.typeButtonActiveExpense : styles.typeButtonActiveIncome)]}
+                      style={[styles.composerSegmentButton, type === option && styles.composerSegmentSelected]}
                       onPress={() => setType(option)}>
-                      <Text style={[styles.typeText, type === option && styles.typeTextActive]}>{option}</Text>
+                      <Text style={[styles.composerSegmentText, type === option && styles.composerCategoryTextSelected]}>{option}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1016,7 +1018,7 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
                     placeholder="0.00" placeholderTextColor={colors.secondary} keyboardType="decimal-pad" returnKeyType="done"
                     value={amount} onFocus={handleAmountFocus} onChangeText={handleAmountChange} onSubmitEditing={Keyboard.dismiss} />
                 </View>
-                <Text style={styles.composerLabel}>What was it for?</Text>
+                <Text style={styles.composerLabel}>Description</Text>
                 <TextInput accessibilityLabel="Transaction title" style={styles.composerInput} placeholder="e.g. Groceries or monthly salary"
                   placeholderTextColor={colors.secondary} value={name} onChangeText={setName} returnKeyType="done" onSubmitEditing={Keyboard.dismiss} />
                 <View style={styles.composerCategoryHeader}>
@@ -1032,10 +1034,11 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
                           disabled={isSavingTransaction} activeOpacity={0.7}
                           style={[styles.composerChip, category === cat && styles.composerChipSelected]}
                           onPress={() => setCategory(cat)}>
+                          <Ionicons name={categoryIcons[cat] ?? "grid-outline"} size={18} color={category === cat ? colors.accent : colors.secondary} />
                           <Text style={[styles.composerCategoryText, category === cat && styles.composerCategoryTextSelected]}>{cat}</Text>
                         </TouchableOpacity>
                       ))}
-                      {categoryColumns === 2 && row * 2 + 1 >= categories.length && <View style={{ flex: 1 }} />}
+                      {Array.from({ length: Math.max(0, categoryColumns - categories.slice(row * categoryColumns, (row + 1) * categoryColumns).length) }, (_, index) => <View key={`empty-${index}`} style={{ flex: 1 }} />)}
                     </View>
                   ))}
                 </View>
@@ -1048,7 +1051,7 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
                 <TouchableOpacity accessibilityRole="button" accessibilityState={{ busy: isSavingTransaction, disabled: isSavingTransaction }}
                   onPress={handleSaveTransaction} disabled={isSavingTransaction} style={[styles.composerSave, isSavingTransaction && { opacity: 0.6 }]}>
                   <Ionicons name="checkmark" size={20} color="#FFFFFF" />
-                  <Text style={styles.saveButtonText}>{isSavingTransaction ? "Saving..." : editingTransactionId ? "Save changes" : "Add transaction"}</Text>
+                  <Text style={styles.saveButtonText}>{isSavingTransaction ? "Saving..." : editingTransactionId ? "Save changes" : "Save Transaction"}</Text>
                 </TouchableOpacity>
               </View>
             </View>

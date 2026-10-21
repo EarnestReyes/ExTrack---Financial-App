@@ -9,6 +9,8 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.extrack.app",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Allow ExTrack to use Face ID to secure your account.",
         "NSCameraUsageDescription": "Allow ExTrack to access your camera to update your profile photo.",
@@ -42,6 +44,8 @@
       "favicon": "./assets/images/extrack-logo.png"
     },
     "plugins": [
+      "@react-native-firebase/app",
+      "@react-native-firebase/app-check",
       "expo-router",
       [
         "expo-splash-screen",

@@ -1,3 +1,4 @@
+import { registerWorkerAppCheck, supportChatEnabled } from "../services/ai/supportService";
 import { auth, db } from "@/services/firebase/client";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as Notifications from "expo-notifications";
@@ -33,6 +34,17 @@ Notifications.setNotificationHandler({
 });
 
 export default function RootLayout() {
+  useEffect(() => {
+    if (!__DEV__ || process.env.EXPO_PUBLIC_ANDROID_APP_CHECK_DIAGNOSTICS_ENABLED !== 'true') return;
+    // Opt-in device diagnostics work with every AI activation flag disabled.
+    void import('../services/firebase/workerAppCheck').then(async ({ initializeWorkerAppCheck }) => {
+      const instance = await initializeWorkerAppCheck();
+      registerWorkerAppCheck(instance);
+      console.info('Device App Check acquired. Worker verification is still required.');
+    }).catch(() => {
+      console.info('Device App Check unavailable. AI remains disabled.');
+    });
+  }, []);
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
@@ -316,9 +328,8 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="statements" />
           <Stack.Screen name="help" />
-          {/* Deferred for a future release; keep the route implementation intact.
-              Explicitly exclude it so automatic routing and deep links cannot expose chat. */}
-          <Stack.Protected guard={false}>
+          {/* Server activation and verified free-tier configuration are also required. */}
+          <Stack.Protected guard={supportChatEnabled}>
             <Stack.Screen name="ChatSupport" />
           </Stack.Protected>
         </Stack.Protected>
