@@ -26,8 +26,8 @@ export const createStyles = (isDarkMode: boolean) => {
             maxWidth: 720,
             alignSelf: 'center',
             paddingHorizontal: 20,
-            paddingTop: 24,
-            paddingBottom: 140,
+            paddingTop: 16,
+            paddingBottom: 84,
         },
         headerRow: {
             flexDirection: "row",

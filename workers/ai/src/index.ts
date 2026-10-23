@@ -18,6 +18,24 @@ async function execute(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.protocol !== 'https:' || url.search) throw new ApiError(400, 'invalid-argument', 'HTTPS without query parameters required.');
   const operation = url.pathname.slice(1);
+  if (operation === 'verifyTokens') {
+    const until = Date.parse(env.TOKEN_VERIFICATION_UNTIL ?? '');
+    const remaining = until - Date.now();
+    // Explicit, short-lived test window; verification cannot coexist with AI activation.
+    if (env.TOKEN_VERIFICATION_ENABLED !== 'true' || !Number.isFinite(until) || remaining <= 0 || remaining > 3600000 ||
+        env.AI_ENABLED !== 'false' || env.AI_FREE_TIER_VERIFIED !== 'false') {
+      return json({ ok: false }, 404);
+    }
+    if (request.method !== 'POST') return json({ ok: false }, 405);
+    // No request body, Gemini configuration, quota reservation, or financial access.
+    if (request.body !== null) return json({ ok: false }, 400);
+    try {
+      await verifyFirebaseTokens(request, env);
+      return json({ ok: true });
+    } catch (error) {
+      return json({ ok: false }, error instanceof ApiError && error.status === 401 ? 401 : 503);
+    }
+  }
   if (operation !== 'supportChat' && operation !== 'explainInsights') throw new ApiError(404, 'not-found', 'Endpoint not found.');
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (request.method !== 'POST') throw new ApiError(405, 'invalid-argument', 'POST required.');
@@ -43,7 +61,7 @@ async function execute(request: Request, env: Env): Promise<Response> {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! },
     body: JSON.stringify({ systemInstruction: { parts: [{ text: input.instruction }] }, contents: input.contents,
-      generationConfig: { maxOutputTokens: 512, thinkingConfig: { thinkingBudget: 0 } } }),
+      generationConfig: { maxOutputTokens: 512, thinkingConfig: { thinkingLevel: 'low' } } }),
   });
   if (response.status === 429) {
     const blocked = await quota.fetch(new Request('https://quota/block', { method: 'POST', body: JSON.stringify({ action: 'block', day: usage.day }) }));

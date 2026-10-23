@@ -7,7 +7,15 @@ const transportReady = !supportUsesWorker || process.env.EXPO_PUBLIC_WORKER_AI_V
 const freeAIReleaseEnabled = process.env.EXPO_PUBLIC_FREE_AI_RELEASE_ENABLED === "true";
 export const supportChatEnabled = transportReady && freeAIReleaseEnabled && process.env.EXPO_PUBLIC_SUPPORT_CHAT_ENABLED === "true";
 export const financialInsightsAIEnabled = transportReady && freeAIReleaseEnabled && process.env.EXPO_PUBLIC_AI_INSIGHTS_ENABLED === "true";
-let pausedUntil = 0;
+const pauses = new Map<string, number>();
+export class SupportError extends Error {
+  constructor(message: string, public retryable = false) { super(message); }
+}
+export function retryDelay(value: string | null, now = Date.now()): number {
+  if (value && /^\d+$/.test(value.trim())) return Math.min(Math.max(Number(value) * 1000, 1000), 86400000);
+  const date = value ? Date.parse(value) : NaN;
+  return Number.isFinite(date) && date > now ? Math.min(date - now, 86400000) : 60000;
+}
 let workerAppCheck: AppCheck | null = null;
 /** Register only an App Check instance initialized with a real platform provider. */
 export function registerWorkerAppCheck(instance: AppCheck) {
@@ -17,9 +25,10 @@ export function registerWorkerAppCheck(instance: AppCheck) {
 export interface SupportMessage { role: "user" | "model"; text: string }
 
 async function callAI(operation: "supportChat" | "explainInsights", payload: object): Promise<string> {
-  if (Date.now() < pausedUntil) throw new Error("AI usage is paused until tomorrow. Offline summaries and Help still work.");
   const user = auth.currentUser;
   if (!user) throw new Error("Sign in to use AI.");
+  const pausedUntil = pauses.get(user.uid) ?? 0;
+  if (Date.now() < pausedUntil) throw new SupportError(`AI limit reached. Try after ${new Date(pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Offline help is available.`);
   try {
     let data: { text?: unknown };
     if (supportUsesWorker) {
@@ -42,6 +51,13 @@ async function callAI(operation: "supportChat" | "explainInsights", payload: obj
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
+        if (response.status === 429) {
+          const until = Date.now() + retryDelay(response.headers.get('Retry-After'));
+          pauses.set(user.uid, until);
+          throw new SupportError(`AI limit reached. Try after ${new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Offline help is available.`);
+        }
+        if (response.status === 400 || response.status === 413) throw new SupportError('Use a shorter app-help question without personal details. Edit your message before sending again.');
+        if (response.status === 403) throw new SupportError('App support is unavailable for this configuration. Use offline help.');
         const error = new Error("Worker unavailable.") as Error & { code: string };
         error.code = response.status === 429 ? "functions/resource-exhausted" : response.status === 401 ? "functions/unauthenticated" : "functions/unavailable";
         throw error;
@@ -56,13 +72,15 @@ async function callAI(operation: "supportChat" | "explainInsights", payload: obj
     if (!data || typeof data.text !== "string" || !data.text.trim()) throw new Error("Empty response.");
     return data.text.slice(0, 2000);
   } catch (error: unknown) {
+    if (error instanceof SupportError) throw error;
     const code = (error as { code?: string }).code;
     if (code === "functions/resource-exhausted") {
-      pausedUntil = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1);
-      throw new Error("AI usage is paused until tomorrow. Offline summaries and Help still work.");
+      pauses.set(user.uid, Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1));
+      throw new SupportError("AI usage is paused until the next UTC day. Offline help is available.");
     }
-    if (code === "functions/unauthenticated") throw new Error("Sign in again and verify app attestation to use AI.");
-    throw new Error("AI unavailable. Your offline summaries and Help still work.");
+    if (code === "functions/invalid-argument") throw new SupportError('Use a shorter app-help question without personal details.');
+    if (code === "functions/unauthenticated") throw new SupportError("Your session or device verification could not be confirmed. Sign in again or use offline help.");
+    throw new SupportError("Could not get a reply. Check your connection or try later. An attempt may count toward your AI limit. Offline help is available.", true);
   }
 }
 

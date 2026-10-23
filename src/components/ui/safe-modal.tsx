@@ -3,11 +3,12 @@ import { KeyboardAvoidingView, Modal, Platform, StyleSheet, View, type ModalProp
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /** Keep modal content inside the usable window, including edge-to-edge Android. */
-export function SafeModal({ children, avoidKeyboard = false, ...props }: ModalProps & { avoidKeyboard?: boolean }) {
+export function SafeModal({ children, avoidKeyboard = false, surfaceColor, ...props }: ModalProps & { avoidKeyboard?: boolean; surfaceColor?: string }) {
   const insets = useSafeAreaInsets();
   return (
     <Modal {...props} statusBarTranslucent navigationBarTranslucent>
       <View style={[styles.viewport, props.transparent && styles.backdrop, {
+        ...(surfaceColor ? { backgroundColor: surfaceColor } : {}),
         paddingTop: insets.top, paddingBottom: insets.bottom,
         paddingLeft: insets.left, paddingRight: insets.right,
       }]}>

@@ -1,7 +1,7 @@
 import { supportMessages } from '../../../functions/src/utils/validation';
 import { ApiError } from './types';
 
-export const MODEL = 'gemini-2.5-flash-lite';
+export const MODEL = 'gemini-3.8-flash';
 export type Operation = 'supportChat' | 'explainInsights';
 export interface ProviderInput { instruction: string; contents: { role: string; parts: { text: string }[] }[] }
 const SUPPORT = 'You are friendly ExTrack app support. Explain only the selected app topic. ' +

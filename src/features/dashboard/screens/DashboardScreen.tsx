@@ -32,7 +32,7 @@ useColorScheme,
 View
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { cacheUserProfile, confirmLoanInstallment, getSyncState, subscribeFinancialData, syncFromFirestore, watchFinancialData } from "../../../database";
 import { legacyStorageStatus } from "../../../database/legacyStorage";
 import { chartData, loanSchedule, localDate, mergeLedger, summarize } from "../../../domain/finance";
@@ -66,6 +66,7 @@ interface GraphDataItem {
 
 
 export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activity" | "insights" }) {
+  const safeInsets = useSafeAreaInsets();
   const { width, fontScale } = useWindowDimensions();
   const { compose } = useLocalSearchParams<{ compose?: string }>();
   const reducedMotion = useReducedMotion();
@@ -504,7 +505,7 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+    <View style={[styles.container, { paddingTop: safeInsets.top, paddingLeft: safeInsets.left, paddingRight: safeInsets.right }]}>
       <ScrollView
         style={styles.dashboardContainer}
         contentContainerStyle={styles.dashboardContent}
@@ -1058,6 +1059,6 @@ export default function HomeScreen({ mode = "home" }: { mode?: "home" | "activit
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }

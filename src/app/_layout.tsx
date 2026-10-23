@@ -1,4 +1,4 @@
-import { registerWorkerAppCheck, supportChatEnabled } from "../services/ai/supportService";
+import { registerWorkerAppCheck } from "../services/ai/supportService";
 import { auth, db } from "@/services/firebase/client";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as Notifications from "expo-notifications";
@@ -46,6 +46,14 @@ export default function RootLayout() {
     });
   }, []);
   const [user, setUser] = useState<User | null>(null);
+  useEffect(() => {
+    if (!__DEV__ || !user || process.env.EXPO_PUBLIC_WORKER_TOKEN_VERIFICATION_ENABLED !== 'true') return;
+    let active = true;
+    void import('../services/firebase/verifyWorkerTokens').then(({ verifyWorkerTokens }) => verifyWorkerTokens())
+      .then((ok) => { if (active) console.info(ok ? 'Worker token verification passed.' : 'Worker token verification failed. AI remains disabled.'); })
+      .catch(() => { if (active) console.info('Worker token verification failed. AI remains disabled.'); });
+    return () => { active = false; };
+  }, [user?.uid]);
   const [initializing, setInitializing] = useState(true);
   const [isLocked, setIsLocked] = useState(false);
   const [isAnimationFinished, setIsAnimationFinished] = useState(false);
@@ -328,10 +336,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="statements" />
           <Stack.Screen name="help" />
-          {/* Server activation and verified free-tier configuration are also required. */}
-          <Stack.Protected guard={supportChatEnabled}>
-            <Stack.Screen name="ChatSupport" />
-          </Stack.Protected>
+          <Stack.Screen name="ChatSupport" />
         </Stack.Protected>
       </Stack>
     </AuthContext.Provider>

@@ -61,7 +61,7 @@ async function fixture() {
       if (keysDown) throw Error('signing key service unavailable');
       keyCalls++; return Response.json({ keys: [(url.includes('securetoken') ? authKey : appKey).jwk] }, { headers: { 'Cache-Control': 'max-age=3600' } });
     }
-    assert.equal(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent');
+    assert.equal(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent');
     providerCalls++; lastBody = JSON.parse(options.body);
     assert.equal(options.headers.Authorization, undefined);
     if (responseMode === 'network') throw Error('private provider detail');
@@ -72,21 +72,99 @@ async function fixture() {
   const storage = sqliteStorage();
   const modules = load('workers/ai/src/index.ts', { fetch: network });
   let quota = new modules.AIQuota({ storage });
-  const env = { AI_ENABLED: 'true', AI_FREE_TIER_VERIFIED: 'true', GEMINI_MODEL: 'gemini-2.5-flash-lite', GEMINI_API_KEY: 'synthetic-test-key', FIREBASE_PROJECT_ID: 'extrack-test', FIREBASE_PROJECT_NUMBER: '123456789', FIREBASE_APP_IDS: '1:123456789:android:abc', ALLOWED_ORIGINS: 'https://extrack.example', AI_QUOTA: { idFromName(name) { assert.equal(name, 'global-v1'); return name; }, get() { return { fetch: request => quota.fetch(request) }; } } };
+  const env = { AI_ENABLED: 'true', AI_FREE_TIER_VERIFIED: 'true', GEMINI_MODEL: 'gemini-3.8-flash', GEMINI_API_KEY: 'synthetic-test-key', FIREBASE_PROJECT_ID: 'extrack-test', FIREBASE_PROJECT_NUMBER: '123456789', FIREBASE_APP_IDS: '1:123456789:android:abc', ALLOWED_ORIGINS: 'https://extrack.example', AI_QUOTA: { idFromName(name) { assert.equal(name, 'global-v1'); return name; }, get() { return { fetch: request => quota.fetch(request) }; } } };
   const appToken = await jwt(appKey, appClaims());
   const send = async (body = summary, options = {}) => {
     const idToken = options.idToken ?? await jwt(authKey, authClaims({ sub: options.uid ?? 'user-A' }));
     const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + idToken, 'X-Firebase-AppCheck': appToken, ...options.headers };
-    return modules.default.fetch(new Request('https://ai.example/' + (options.operation ?? 'explainInsights'), { method: options.method ?? 'POST', headers, body: (options.method ?? 'POST') === 'POST' ? JSON.stringify(body) : undefined }), env);
+    return modules.default.fetch(new Request('https://ai.example/' + (options.operation ?? 'explainInsights'), { method: options.method ?? 'POST', headers, body: (options.method ?? 'POST') === 'POST' && !options.emptyBody ? JSON.stringify(body) : undefined }), env);
   };
   return { send, env, storage, modules, appKey, authKey, appToken, setMode(mode) { responseMode = mode; }, restart() { quota = new modules.AIQuota({ storage }); }, get calls() { return providerCalls; }, get body() { return lastBody; }, get keyCalls() { return keyCalls; }, setKeysDown(value) { keysDown = value; } };
 }
 
+test('Token-only verification is default-off, time-limited and incompatible with AI activation', async () => {
+  const f = await fixture();
+  const send = () => f.send(null, { operation: 'verifyTokens', method: 'GET' });
+  assert.equal((await send()).status, 404);
+  f.env.TOKEN_VERIFICATION_ENABLED = 'true';
+  f.env.AI_ENABLED = f.env.AI_FREE_TIER_VERIFIED = 'false';
+  for (const until of ['', 'invalid', new Date(Date.now() - 1000).toISOString(), new Date(Date.now() + 7200000).toISOString()]) {
+    f.env.TOKEN_VERIFICATION_UNTIL = until;
+    assert.equal((await send()).status, 404);
+  }
+  f.env.TOKEN_VERIFICATION_UNTIL = new Date(Date.now() + 1800000).toISOString();
+  assert.equal((await send()).status, 405);
+  for (const key of ['AI_ENABLED', 'AI_FREE_TIER_VERIFIED']) {
+    f.env[key] = 'true'; assert.equal((await send()).status, 404); f.env[key] = 'false';
+  }
+  assert.equal(f.keyCalls, 0); assert.equal(f.calls, 0);
+});
+test('Token-only verification accepts both tokens with no provider, quota or body access', async () => {
+  const f = await fixture();
+  Object.assign(f.env, { TOKEN_VERIFICATION_ENABLED: 'true', TOKEN_VERIFICATION_UNTIL: new Date(Date.now() + 1800000).toISOString(), AI_ENABLED: 'false', AI_FREE_TIER_VERIFIED: 'false', GEMINI_API_KEY: undefined });
+  f.env.AI_QUOTA = { idFromName() { throw Error('Quota must not be used'); } };
+  const result = await f.send(undefined, { operation: 'verifyTokens', emptyBody: true });
+  assert.equal(result.status, 200); assert.deepEqual(await result.json(), { ok: true });
+  assert.equal(result.headers.get('Cache-Control'), 'no-store');
+  assert.equal((await f.send({ private: 'must not be processed' }, { operation: 'verifyTokens' })).status, 400);
+  assert.equal(f.calls, 0);
+});
+test('Token-only verification rejects missing, malformed, expired, forged and mismatched tokens', async () => {
+  const f = await fixture();
+  Object.assign(f.env, { TOKEN_VERIFICATION_ENABLED: 'true', TOKEN_VERIFICATION_UNTIL: new Date(Date.now() + 1800000).toISOString(), AI_ENABLED: 'false', AI_FREE_TIER_VERIFIED: 'false' });
+  const cases = [
+    { headers: { Authorization: '' } }, { headers: { 'X-Firebase-AppCheck': '' } },
+    { idToken: 'invalid' }, { headers: { 'X-Firebase-AppCheck': 'invalid' } },
+    ...await Promise.all([{ exp: now() - 1 }, { aud: 'other' }, { iss: 'other' }].map(async claims => ({ idToken: await jwt(f.authKey, authClaims(claims)) }))),
+    { idToken: await jwt(f.appKey, authClaims(), { kid: 'auth-key' }) },
+    ...await Promise.all([{ exp: now() - 1 }, { aud: ['projects/999999'] }, { iss: 'other' }, { sub: '1:123456789:android:other' }].map(async claims => ({ headers: { 'X-Firebase-AppCheck': await jwt(f.appKey, appClaims(claims)) } }))),
+    { headers: { 'X-Firebase-AppCheck': await jwt(f.authKey, appClaims(), { kid: 'app-key' }) } },
+  ];
+  for (const options of cases) {
+    const result = await f.send(undefined, { operation: 'verifyTokens', emptyBody: true, ...options });
+    assert.equal(result.status, 401); assert.deepEqual(await result.json(), { ok: false });
+  }
+  f.setKeysDown(true);
+  // Fresh module cache forces signing-key acquisition failure.
+  const fresh = await fixture(); fresh.setKeysDown(true);
+  Object.assign(fresh.env, f.env);
+  const unavailable = await fresh.send(undefined, { operation: 'verifyTokens', emptyBody: true });
+  assert.equal(unavailable.status, 503); assert.deepEqual(await unavailable.json(), { ok: false });
+  assert.equal(f.calls, 0); assert.equal(fresh.calls, 0);
+});
+test('Device verification is opt-in, refreshes both real SDK tokens and sends no body', async () => {
+  let calls = 0, nativeCalls = 0, responseStatus = 200, request;
+  const user = { uid: 'device-user', getIdToken: async force => { assert.equal(force, true); return 'test-id'; } };
+  const auth = { currentUser: user };
+  const build = (development, enabled, url = 'https://extrack-ai.test-account.workers.dev') => load('src/services/firebase/verifyWorkerTokens.ts', {
+    __DEV__: development, process: { env: { EXPO_PUBLIC_WORKER_TOKEN_VERIFICATION_ENABLED: enabled, EXPO_PUBLIC_AI_WORKER_URL: url } },
+    fetch: async (url, options) => { calls++; request = { url, options }; return Response.json({ ok: responseStatus === 200 }, { status: responseStatus }); },
+  }, {
+    './client': { auth }, './workerAppCheck': { initializeWorkerAppCheck: async () => { nativeCalls++; return {}; } },
+    'firebase/app-check': { getToken: async (_instance, force) => { assert.equal(force, true); return { token: 'test-app-check' }; } },
+  }).verifyWorkerTokens;
+  assert.equal(await build(false, 'true')(), false);
+  assert.equal(await build(true, 'false')(), false);
+  assert.equal(await build(true, 'true', 'https://attacker.example')(), false);
+  assert.equal(calls, 0); assert.equal(nativeCalls, 0);
+  const verify = build(true, 'true');
+  assert.equal(await verify(), true);
+  assert.equal(request.url, 'https://extrack-ai.test-account.workers.dev/verifyTokens');
+  assert.equal(request.options.body, undefined);
+  assert.equal(request.options.headers.Authorization, 'Bearer test-id');
+  assert.equal(request.options.headers['X-Firebase-AppCheck'], 'test-app-check');
+  responseStatus = 401; assert.equal(await verify(), false);
+  responseStatus = 503; assert.equal(await verify(), false);
+  auth.currentUser = null; assert.equal(await verify(), false);
+  auth.currentUser = { ...user, getIdToken: async () => { auth.currentUser = null; return 'test-id'; } };
+  const previous = calls; assert.equal(await verify(), false); assert.equal(calls, previous);
+});
 test('Worker validates genuine RS256 signatures, project claims and App Check app ID', async () => {
   const f = await fixture(); const result = await f.send();
   assert.equal(result.status, 200); assert.equal(f.calls, 1);
   assert.equal(f.body.contents[0].parts[0].text, JSON.stringify(summary.summary));
   assert.equal(f.body.generationConfig.maxOutputTokens, 512);
+  assert.deepEqual(f.body.generationConfig, { maxOutputTokens: 512, thinkingConfig: { thinkingLevel: 'low' } });
 });
 test('ID token rejection: expiry, future issue/auth time, issuer, audience, subject, algorithm, key and forged signature', async () => {
   const f = await fixture();
@@ -151,7 +229,7 @@ test('Provider network/error/empty responses are sanitized; attempts are not ref
 });
 test('Missing storage, disabled activation and paid-model configuration fail closed', async () => {
   const f = await fixture();
-  for (const [key, value] of [['AI_ENABLED', 'false'], ['AI_FREE_TIER_VERIFIED', 'false'], ['GEMINI_MODEL', 'paid-model'], ['AI_QUOTA', undefined]]) {
+  for (const [key, value] of [['AI_ENABLED', 'false'], ['AI_FREE_TIER_VERIFIED', 'false'], ['GEMINI_MODEL', 'paid-model'], ['GEMINI_MODEL', 'gemini-2.5-flash-lite'], ['AI_QUOTA', undefined]]) {
     const previous = f.env[key]; f.env[key] = value; assert.equal((await f.send()).status, 503); f.env[key] = previous;
   }
   f.env.AI_QUOTA = { idFromName() {}, get() { return { fetch() { throw Error('storage offline'); } }; } };
@@ -167,13 +245,14 @@ test('HTTP routes, origins and content-type checks do not permit bypass', async 
   assert.equal(preflight.status, 204); assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), 'https://extrack.example'); assert.equal(f.calls, 0);
 });
 
-function mobileFixture(extraEnv = {}, appCheckInitializer) {
+function mobileFixture(extraEnv = {}, appCheckInitializer, clock = Date) {
   const app = { name: 'extrack', options: { appId: 'test-app' } };
   const auth = { currentUser: { uid: 'A', getIdToken: async () => 'synthetic-id-token' } };
-  let httpCalls = 0, callableCalls = 0, status = 200, lastRequest;
+  let httpCalls = 0, callableCalls = 0, status = 200, lastRequest, retryAfter;
   const service = load('src/services/ai/supportService.ts', {
+    Date: clock,
     process: { env: { EXPO_PUBLIC_AI_TRANSPORT: 'worker', EXPO_PUBLIC_AI_WORKER_URL: 'https://extrack-ai.test-account.workers.dev', EXPO_PUBLIC_WORKER_AI_VERIFIED: 'true', EXPO_PUBLIC_FREE_AI_RELEASE_ENABLED: 'true', EXPO_PUBLIC_SUPPORT_CHAT_ENABLED: 'true', EXPO_PUBLIC_AI_INSIGHTS_ENABLED: 'true', ...extraEnv } },
-    fetch: async (url, options) => { httpCalls++; lastRequest = { url, options }; return Response.json({ text: 'Help response' }, { status }); },
+    fetch: async (url, options) => { httpCalls++; lastRequest = { url, options }; return Response.json({ text: 'Help response' }, { status, headers: retryAfter ? { 'Retry-After': retryAfter } : {} }); },
   }, {
     'firebase/functions': { getFunctions() { callableCalls++; }, httpsCallable() { callableCalls++; } },
     'firebase/app-check': { getToken: async () => ({ token: 'synthetic-app-check-token' }) },
@@ -183,8 +262,31 @@ function mobileFixture(extraEnv = {}, appCheckInitializer) {
       return appCheckInitializer(app);
     } },
   });
-  return { service, auth, app, get calls() { return httpCalls; }, get callableCalls() { return callableCalls; }, get request() { return lastRequest; }, setStatus(value) { status = value; } };
+  return { service, auth, app, get calls() { return httpCalls; }, get callableCalls() { return callableCalls; }, get request() { return lastRequest; }, setStatus(value) { status = value; }, setRetryAfter(value) { retryAfter = value; } };
 }
+test('Mobile rate limits honor Retry-After, isolate accounts and allow manual retry after expiry', async () => {
+  let time = Date.now();
+  class Clock extends Date { constructor(value = time) { super(value); } static now() { return time; } }
+  const f = mobileFixture({}, undefined, Clock); f.service.registerWorkerAppCheck({ app: f.app });
+  f.setStatus(429); f.setRetryAfter('45');
+  const send = () => f.service.sendSupportMessage([{ role: 'user', text: 'Help' }]);
+  await assert.rejects(send(), /AI limit reached/);
+  f.setStatus(200); await assert.rejects(send(), /AI limit reached/); assert.equal(f.calls, 1);
+  f.auth.currentUser = { ...f.auth.currentUser, uid: 'B' }; await send(); assert.equal(f.calls, 2);
+  f.auth.currentUser = { ...f.auth.currentUser, uid: 'A' }; time += 45001;
+  await send(); assert.equal(f.calls, 3);
+  assert.equal(f.service.retryDelay('invalid', time), 60000);
+  assert.equal(f.service.retryDelay(new Date(time + 30000).toUTCString(), time) <= 30000, true);
+  assert.equal(f.service.retryDelay('99999999999', time), 86400000);
+});
+test('Mobile errors distinguish rejected input, authentication and retryable failures without exposing server details', async () => {
+  const f = mobileFixture(); f.service.registerWorkerAppCheck({ app: f.app });
+  for (const [status, retryable, pattern] of [[400, false, /shorter/], [413, false, /shorter/], [401, false, /session or device/], [403, false, /configuration/], [503, true, /attempt may count/]]) {
+    f.setStatus(status);
+    await assert.rejects(f.service.sendSupportMessage([{ role: 'user', text: 'Help' }]), error => error instanceof f.service.SupportError && error.retryable === retryable && pattern.test(error.message));
+  }
+  assert.equal(f.callableCalls, 0);
+});
 test('Worker mobile transport requires verification and a registered App Check provider', async () => {
   const disabled = mobileFixture({ EXPO_PUBLIC_WORKER_AI_VERIFIED: 'false' });
   assert.equal(disabled.service.supportChatEnabled, false);

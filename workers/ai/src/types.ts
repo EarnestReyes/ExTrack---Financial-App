@@ -12,6 +12,8 @@ export interface QuotaNamespace {
   get(id: unknown): { fetch(request: Request): Promise<Response> };
 }
 export interface Env {
+  TOKEN_VERIFICATION_ENABLED?: string;
+  TOKEN_VERIFICATION_UNTIL?: string;
   AI_QUOTA: QuotaNamespace;
   GEMINI_API_KEY?: string;
   AI_ENABLED: string;
